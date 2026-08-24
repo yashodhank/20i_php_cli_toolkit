@@ -68,7 +68,7 @@ API_KEY=your-20i-api-key
 
 The bootstrap process loads this value into the CLI scripts. Keep `.env` private and do not commit it to source control.
 
-See [`configs/README.md`](configs/README.md) and [`docs/setup.md`](docs/setup.md) for additional setup information.
+See [`docs/cli-handbook.md`](docs/cli-handbook.md) for the full CLI contract (admins, automation, agents). See [`configs/README.md`](configs/README.md) and [`docs/setup.md`](docs/setup.md) for additional setup information.
 
 ## Quick Start
 
@@ -152,6 +152,7 @@ For DNS-specific behavior, propagation considerations, and batch examples, see [
 - [`scripts/dns/README.md`](scripts/dns/README.md): DNS command guide
 - [`scripts/email/README.md`](scripts/email/README.md): email command guide
 - [`configs/README.md`](configs/README.md): configuration information
+- [`docs/cli-handbook.md`](docs/cli-handbook.md): operator, automation, and agent CLI handbook
 - [`docs/setup.md`](docs/setup.md): setup guidance
 - [`tests/README.md`](tests/README.md): testing information
 
