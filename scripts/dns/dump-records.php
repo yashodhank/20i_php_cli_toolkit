@@ -18,17 +18,36 @@
 declare(strict_types=1);
 
 /*
- * stdout carries machine-consumable JSON Lines. PHP 8.5 prints deprecation
- * notices from the vendored 20i client onto stdout, which would corrupt the
- * stream, so they are disabled here. Human-facing scripts may keep them.
+ * stdout carries machine-consumable JSON Lines. The vendored 20i client and
+ * PHP runtime can raise notices and warnings mid-run (for example the
+ * client's "404 on <url>" notice); with CLI defaults those interleave into
+ * stdout and corrupt the stream. Deprecations from the vendored client are
+ * dropped outright; every other diagnostic is routed to STDERR.
  */
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+ini_set('display_errors', 'stderr');
+set_error_handler(static function (
+    int $severity,
+    string $message,
+    string $file,
+    int $line
+): bool {
+    if ((error_reporting() & $severity) === 0) {
+        return true;
+    }
+
+    fwrite(STDERR, "[php] {$message} in {$file}:{$line}\n");
+
+    return true;
+});
 
 require_once __DIR__ . '/../../lib/bootstrap.php';
 require_once __DIR__ . '/../../lib/cli.php';
 require_once __DIR__ . '/../../lib/dns.php';
 require_once __DIR__ . '/../../lib/package.php';
+require_once __DIR__ . '/../../lib/zone-records.php';
 
+use function SoftwareWrap\TwentyI\Cli\emitDomainLine;
 use function SoftwareWrap\TwentyI\Cli\fail;
 use function SoftwareWrap\TwentyI\Cli\readLinesFromStdin;
 use function SoftwareWrap\TwentyI\Dns\getStackDnsRecords;
@@ -37,9 +56,11 @@ use function SoftwareWrap\TwentyI\getPackageDomains;
 use function SoftwareWrap\TwentyI\getPackageId;
 use function SoftwareWrap\TwentyI\getPackages;
 use function SoftwareWrap\TwentyI\isValidDomain;
+use function SoftwareWrap\TwentyI\isValidQueryName;
 use function SoftwareWrap\TwentyI\normalizeDomain;
 use function SoftwareWrap\TwentyI\responseToArray;
 
+use function SoftwareWrap\TwentyI\Cli\sanitizeApiError;
 use const SoftwareWrap\TwentyI\Cli\EXIT_PARTIAL_FAILURE;
 use const SoftwareWrap\TwentyI\Cli\EXIT_SUCCESS;
 
@@ -63,20 +84,27 @@ Usage:
 Read-only. No DNS or package state is modified.
 
 Sources:
-  api   The 20i stored zone (GET /package/{id}/dns). Covers every record
-        type the zone holds, including SRV, wildcard, and subhost entries.
-        Reflects zone config even before StackDNS publication completes.
+  api   The 20i stored zone (GET /package/{id}/dns). Exports every record
+        type the zone holds, including SRV, wildcard, and subhost entries,
+        unless narrowed with --types. Reflects zone config even before
+        StackDNS publication completes.
   dns   Live authoritative StackDNS queries for the requested --types only.
         The ground truth for "did this record publish yet?"
   both  Merge api + dns; every record carries a "source" tag. Default.
 
 Options:
   --source <s>    api, dns, or both. Default: both.
-  --types <list>  Comma-separated record types. Default: A,AAAA,CNAME,MX,NS,SOA,TXT,SRV.
-                  For the api source this filters the zone read.
+  --types <list>  Comma-separated record types. Default for dns queries:
+                  A,AAAA,CNAME,MX,NS,SOA,TXT,SRV. Without --types the api
+                  source is not filtered at all; with it, both sources are
+                  narrowed to the list.
   --all           Dump every domain attached to the package identified by
-                  the positional <package-domain>.
+                  the positional <package-domain>. Standard input is
+                  ignored in this mode.
   --help, -h      Display this help text.
+
+Query names may use leading underscores (_dmarc.example.com,
+_sip._tcp.example.com) for TXT and SRV owner checks.
 
 Output:
   One JSON object per domain on stdout (JSON Lines):
@@ -99,99 +127,9 @@ EOT
 }
 
 /**
- * Normalize one raw record from the 20i zone API.
- *
- * @param array<string,mixed> $record
- * @return array{owner:string,type:string,ttl:null,rdata:string,source:string,fields:array<string,mixed>}
- */
-function normalizeApiRecord(array $record): array
-{
-    $host = (string) ($record['host'] ?? '');
-    $type = strtoupper((string) ($record['type'] ?? ''));
-
-    switch ($type) {
-        case 'A':
-            $rdata = (string) ($record['ip'] ?? '');
-            break;
-        case 'AAAA':
-            $rdata = (string) ($record['ipv6'] ?? '');
-            break;
-        case 'CNAME':
-        case 'NS':
-            $rdata = rtrim((string) ($record['target'] ?? ''), '.');
-            break;
-        case 'MX':
-            $rdata = ($record['pri'] ?? '') . ' '
-                . rtrim((string) ($record['target'] ?? ''), '.');
-            break;
-        case 'SRV':
-            $rdata = ($record['pri'] ?? '') . ' '
-                . ($record['weight'] ?? '') . ' '
-                . ($record['port'] ?? '') . ' '
-                . rtrim((string) ($record['target'] ?? ''), '.');
-            break;
-        case 'SOA':
-            $rdata = rtrim((string) ($record['mname'] ?? ''), '.') . ' '
-                . rtrim((string) ($record['rname'] ?? ''), '.') . ' '
-                . ($record['serial'] ?? '') . ' '
-                . ($record['refresh'] ?? '') . ' '
-                . ($record['retry'] ?? '') . ' '
-                . ($record['expire'] ?? '') . ' '
-                . ($record['minimum-ttl'] ?? '');
-            break;
-        case 'TXT':
-            $rdata = (string) ($record['txt'] ?? '');
-            break;
-        default:
-            $rdata = json_encode($record, JSON_UNESCAPED_SLASHES) ?: '';
-            break;
-    }
-
-    return [
-        'owner' => rtrim($host, '.'),
-        'type' => $type,
-        'ttl' => null,
-        'rdata' => trim($rdata),
-        'source' => 'api',
-        'fields' => $record,
-    ];
-}
-
-/**
- * Find the zone key in the API zone map for a domain name.
- *
- * The zone root is the longest map key that is the domain itself or a
- * suffix of it. Subdomains on a package share their parent zone.
- *
- * The original map key is returned so callers can look the entry up;
- * comparisons are performed on normalized names.
- *
- * @param array<string,mixed> $zoneMap
- */
-function findZoneForDomain(array $zoneMap, string $domain): ?string
-{
-    $domain = normalizeDomain($domain);
-    $best = null;
-    $bestLength = -1;
-
-    foreach ($zoneMap as $originalKey => $_) {
-        $zone = normalizeDomain((string) $originalKey);
-
-        if ($domain === $zone || substr($domain, -strlen('.' . $zone)) === '.' . $zone) {
-            if (strlen($zone) > $bestLength) {
-                $best = (string) $originalKey;
-                $bestLength = strlen($zone);
-            }
-        }
-    }
-
-    return $best;
-}
-
-/**
  * Fetch the zone map for a package, with a per-process cache.
  *
- * GET /package/{id}/dns returns {"zone":{"records":[...]}} per zone.
+ * GET /package/{id}/dns returns an entry per zone root on the package.
  *
  * @param array<string,array<string,mixed>> $cache
  * @return array<string,mixed>
@@ -214,72 +152,6 @@ function getPackageZoneMap(
     $cache[$packageId] = $response;
 
     return $response;
-}
-
-/**
- * Records for one domain from the 20i zone API.
- *
- * Zone roots get every record in the zone. Subdomains get records owned by
- * that exact name plus wildcard records from the zone that can cover them.
- *
- * @param array<string,mixed> $zoneMap
- * @param array<int,string> $typeFilter Uppercase types to keep; empty keeps all.
- * @return array<int,array<string,mixed>>
- */
-function getApiRecordsForDomain(
-    array $zoneMap,
-    string $domain,
-    array $typeFilter
-): array {
-    $zone = findZoneForDomain($zoneMap, $domain);
-
-    if ($zone === null) {
-        throw new RuntimeException(
-            "No DNS zone covers '{$domain}' on this package."
-        );
-    }
-
-    $zoneEntry = $zoneMap[$zone] ?? [];
-    $rawRecords = [];
-
-    if (is_array($zoneEntry)) {
-        $candidate = $zoneEntry['records'] ?? $zoneEntry;
-
-        if (is_array($candidate)) {
-            $rawRecords = $candidate;
-        }
-    }
-
-    $domain = normalizeDomain($domain);
-    $isZoneRoot = $domain === normalizeDomain((string) $zone);
-    $records = [];
-
-    foreach ($rawRecords as $record) {
-        if (!is_array($record)) {
-            continue;
-        }
-
-        $host = normalizeDomain((string) ($record['host'] ?? ''));
-        $type = strtoupper((string) ($record['type'] ?? ''));
-
-        if (!$isZoneRoot) {
-            $isExact = $host === $domain;
-            $isCoveringWildcard = strpos($host, '*.') === 0
-                && substr($domain, -strlen(substr($host, 1))) === substr($host, 1);
-
-            if (!$isExact && !$isCoveringWildcard) {
-                continue;
-            }
-        }
-
-        if ($typeFilter !== [] && !in_array($type, $typeFilter, true)) {
-            continue;
-        }
-
-        $records[] = normalizeApiRecord($record);
-    }
-
-    return $records;
 }
 
 /**
@@ -328,17 +200,26 @@ function resolveApiRecordsAcrossPackages(
         try {
             $zoneMap = getPackageZoneMap($servicesApi, $packageId, $zoneCache);
         } catch (Throwable $exception) {
-            $attempts[] = "package {$packageId}: " . $exception->getMessage();
+            $attempts[] = "package {$packageId}: "
+                . sanitizeApiError($exception);
+            fwrite(
+                STDERR,
+                "\n[php] package {$packageId}: " . $exception->getMessage() . "\n"
+            );
 
             continue;
         }
 
-        $zone = findZoneForDomain($zoneMap, $domain);
+        $zone = \SoftwareWrap\TwentyI\Dns\findZoneForDomain($zoneMap, $domain);
 
         if ($zone !== null) {
             return [
                 'zone' => normalizeDomain((string) $zone),
-                'records' => getApiRecordsForDomain($zoneMap, $domain, $typeFilter),
+                'records' => \SoftwareWrap\TwentyI\Dns\getApiRecordsForDomain(
+                    $zoneMap,
+                    $domain,
+                    $typeFilter
+                ),
             ];
         }
     }
@@ -374,6 +255,7 @@ function dumpDomainRecordsViaDns(string $domain, array $typeCodes): array
  */
 $allDomains = false;
 $types = DEFAULT_TYPES;
+$typesExplicit = false;
 $source = 'both';
 $arguments = [];
 
@@ -413,6 +295,7 @@ for ($index = 1; $index < $argc; $index++) {
         }
 
         $types = [];
+        $typesExplicit = true;
 
         foreach (explode(',', $argv[$index]) as $typeName) {
             $typeName = strtoupper(trim($typeName));
@@ -439,8 +322,12 @@ for ($index = 1; $index < $argc; $index++) {
 $typeNames = array_values(array_unique($types));
 
 /*
- * The dns source can only query types the packet layer understands.
+ * The api source exports the zone verbatim unless the operator narrows it
+ * with an explicit --types. The dns source always needs concrete types;
+ * its default is the packet-layer set.
  */
+$apiTypeFilter = $typesExplicit ? $typeNames : [];
+
 if ($source !== 'api') {
     try {
         $typeCodes = array_map(
@@ -451,6 +338,18 @@ if ($source !== 'api') {
         fail($exception->getMessage());
     }
 } else {
+    foreach ($typeNames as $typeName) {
+        try {
+            \SoftwareWrap\TwentyI\Dns\recordTypeCode($typeName);
+        } catch (Throwable $unused) {
+            fwrite(
+                STDERR,
+                "[warn] type '{$typeName}' is outside the known packet-layer"
+                    . " set; verify the spelling.\n"
+            );
+        }
+    }
+
     $typeCodes = [];
 }
 
@@ -469,7 +368,7 @@ if ($allDomains) {
     foreach ($arguments as $domain) {
         $domain = normalizeDomain($domain);
 
-        if (!isValidDomain($domain)) {
+        if (!isValidQueryName($domain)) {
             fail("Invalid domain '{$domain}'.");
         }
 
@@ -484,7 +383,7 @@ if ($allDomains) {
     foreach (readLinesFromStdin() as $line) {
         $domain = normalizeDomain($line);
 
-        if (!isValidDomain($domain)) {
+        if (!isValidQueryName($domain)) {
             fail("Invalid domain '{$domain}'.");
         }
 
@@ -543,18 +442,19 @@ try {
         fwrite(STDERR, "[{$position}/{$total}] {$domain} ... ");
         fflush(STDERR);
 
-        if (!isValidDomain($domain)) {
+        if (!isValidQueryName($domain)) {
             $failureCount++;
             fwrite(STDERR, "ERROR\n");
 
-            echo json_encode([
+            emitDomainLine([
                 'domain' => $domain,
                 'ok' => false,
                 'packageId' => $packageId,
+                'apiZone' => null,
                 'sources' => (object) [],
                 'records' => [],
-                'errors' => ['invalid' => 'invalid domain'],
-            ], JSON_UNESCAPED_SLASHES) . "\n";
+                'errors' => ['invalid' => 'invalid query name'],
+            ]);
 
             continue;
         }
@@ -571,7 +471,7 @@ try {
                     $packages,
                     $packageId,
                     $domain,
-                    $typeNames,
+                    $apiTypeFilter,
                     $zoneCache
                 );
 
@@ -579,7 +479,11 @@ try {
                 $apiZone = $apiResult['zone'];
                 $sources['api'] = true;
             } catch (Throwable $exception) {
-                $errors['api'] = $exception->getMessage();
+                $errors['api'] = sanitizeApiError($exception);
+                fwrite(
+                    STDERR,
+                    "\n[php] api detail: " . $exception->getMessage() . "\n"
+                );
                 $sources['api'] = false;
             }
         }
@@ -597,15 +501,19 @@ try {
         }
 
         $anySucceeded = in_array(true, $sources, true);
+        fwrite(
+            STDERR,
+            $anySucceeded
+                ? "OK (" . count($records) . " records)\n"
+                : "ERROR\n"
+        );
 
-        if (!$anySucceeded) {
-            $failureCount++;
-            fwrite(STDERR, "ERROR\n");
-        } else {
-            fwrite(STDERR, "OK (" . count($records) . " records)\n");
-        }
-
-        echo json_encode([
+        /*
+         * A degraded row (encode fallback) counts as a failure only when
+         * the domain was otherwise answered; an unanswered domain is
+         * counted once regardless of how its row came out.
+         */
+        $rowClean = emitDomainLine([
             'domain' => $domain,
             'ok' => $anySucceeded,
             'packageId' => $packageId,
@@ -613,7 +521,15 @@ try {
             'sources' => (object) $sources,
             'records' => $records,
             'errors' => (object) $errors,
-        ], JSON_UNESCAPED_SLASHES) . "\n";
+        ]);
+
+        if (!$anySucceeded || !$rowClean) {
+            if (!$rowClean && $anySucceeded) {
+                fwrite(STDERR, "[warn] row degraded during encode\n");
+            }
+
+            $failureCount++;
+        }
     }
 
     fwrite(

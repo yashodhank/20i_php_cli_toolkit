@@ -441,17 +441,19 @@ php scripts/dns/dump-records.php [--source <api|dns|both>] [--types <list>] --al
 | Option | Effect |
 |---|---|
 | `--source` | `api` (20i stored zone), `dns` (authoritative StackDNS), or `both` (default) |
-| `--types` | Comma list; default `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`. Filters the `api` read too |
-| `--all` | Dump every domain on the package named by the positional domain |
+| `--types` | Comma list. Default for `dns`: `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`. Without it the `api` source is **unfiltered** (true full-zone export); with it, both sources narrow |
+| `--all` | Dump every domain on the package named by the positional domain; stdin ignored |
 | `--help`, `-h` | Help |
 
 **Sources:**
 
-- **api** reads the stored zone via `GET /package/{packageId}/dns` and covers every record type the zone holds — including SRV, wildcard (`*.example.com`), and subhost entries the packet path cannot enumerate. Subdomains attached to one package whose parent zone lives on another are resolved by walking ancestor names across packages. API records keep their raw fields under `fields`, including the per-record `ref` id that edit/delete operations key on. This is zone *config*: a just-submitted record appears here immediately even while StackDNS publication is still pending. Zone GETs answer only for zone roots.
+- **api** reads the stored zone via `GET /package/{packageId}/dns` and exports every record type the zone holds — SRV, wildcard (`*.example.com`, one label per RFC 4592), subhost entries, and types beyond the packet layer (CAA, DS, …) unless narrowed with `--types`. Subdomains attached to one package whose parent zone lives on another are resolved by walking ancestor names across packages. API records keep their raw fields under `fields`, including the per-record `ref` id that edit/delete operations key on. This is zone *config*: a just-submitted record appears here immediately even while StackDNS publication is still pending. Zone GETs answer only for zone roots; unrecognized response shapes fail loudly rather than reporting an empty zone.
 - **dns** sends authoritative StackDNS queries (UDP with TCP fallback, the exact code path §8 preflight uses) for the requested `--types` only. This is the ground truth for "did it publish yet?"
 - **both** merges them; every record carries a `source` tag.
 
-**Output contract:** one JSON object per domain on stdout (JSON Lines) — `{domain, ok, packageId, apiZone, sources:{api,dns}, records:[{owner,type,ttl,rdata,source,...}]}` with per-source failure messages under `errors`. Progress goes to stderr, and the script suppresses PHP deprecation notices so stdout stays pure machine-readable JSON safe to pipe.
+Query names accept leading underscores (`_dmarc.example.com`, `_sip._tcp.example.com`) for TXT/SRV owner checks.
+
+**Output contract:** one JSON object per domain on stdout (JSON Lines) — `{domain, ok, packageId, apiZone, sources:{api,dns}, records:[{owner,type,ttl,rdata,source,...}]}` with per-source failure messages under `errors`. All PHP diagnostics route to stderr, so stdout stays pure machine-readable JSON safe to pipe; API error messages are reduced to status + endpoint (full detail stays on stderr).
 
 **Exit codes:** shared table — `0` every domain answered by at least one requested source, `3` at least one domain failed all of its sources (still emits `ok:false` lines), `1` usage/config.
 
