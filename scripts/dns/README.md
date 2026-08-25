@@ -6,27 +6,42 @@ The current implementation supports authoritative read-only DNS export through `
 
 ## `dump-records.php`
 
-`dump-records.php` queries StackDNS authoritatively (UDP with TCP fallback, the same code path as `add-records.php` preflight) and prints one JSON object per domain on stdout:
+`dump-records.php` reads public DNS records for domains attached to 20i packages and prints one JSON object per domain on stdout:
 
 ```bash
 php scripts/dns/dump-records.php example.com
+php scripts/dns/dump-records.php --source api --types SRV,A example.com
 php scripts/dns/dump-records.php --types A,MX,TXT example.com other.example
 php scripts/dns/dump-records.php --all package-example.com
 php scripts/dns/dump-records.php < domains.txt
 ```
 
-- Read-only: never calls a mutation endpoint.
-- Default types: `A,AAAA,CNAME,MX,NS,SOA,TXT`.
-- Progress goes to stderr; stdout stays pure JSON Lines (PHP deprecation notices are suppressed in this script for that reason).
-- Per-domain failure produces `{"ok":false,"error":...}` and exit status `3` if any domain failed; all-success is `0`.
+### Sources
 
-Use it for audits, local inventories, and verifying that a submission published (compare against `add-records.php` expectations).
+Records can come from two independent sources, selected with `--source`:
+
+| Source | Mechanism | Coverage |
+|---|---|---|
+| `api` | `GET /package/{packageId}/dns`, the stored zone | Every record type the zone holds, including SRV, wildcard, and subhost entries; reflects zone config even before StackDNS publication completes |
+| `dns` | Authoritative StackDNS queries | Only the requested `--types`; the ground truth for "did this record publish yet?" |
+| `both` | Merge of both (default) | Every record carries a `source` tag |
+
+The `api` source resolves zones across packages: a subdomain attached to one package whose parent zone lives on another package is resolved by walking ancestor names until a covering zone is found. Zone roots return every record in the zone; subdomains return their exact records plus any wildcard records that can cover them. API records carry their raw fields (including the per-record `ref` id used by edit and delete operations) under `fields`.
+
+### Output
+
+- Read-only: never calls a mutation endpoint.
+- Default types: `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`.
+- Progress goes to stderr; stdout stays pure JSON Lines (PHP deprecation notices are suppressed in this script for that reason).
+- Per-domain failure produces `{"ok":false,"errors":{...}}` with one message per requested source, and exit status `3` if any domain failed all of its sources; all-success is `0`.
+
+Use it for audits, local inventories, and verifying that a submission published (compare the `dns`-source records against `add-records.php` expectations).
 
 ## Architecture
 
 DNS automation uses separate read and write paths:
 
-- **Read path:** pure-PHP authoritative queries sent directly to StackDNS nameservers.
+- **Read path:** the 20i stored-zone endpoint for full coverage (`--source api`) and pure-PHP authoritative queries sent directly to StackDNS nameservers for live state (`--source dns`).
 - **Write path:** the 20i package DNS POST endpoint.
 - **Verification path:** an authoritative StackDNS TXT query after a successful API submission.
 
@@ -36,7 +51,14 @@ For an external or 20i-registered domain attached to a package, the write reques
 POST /package/{packageId}/dns/{domain}
 ```
 
-The script does not depend on an undocumented DNS-record GET endpoint.
+Read access to the same path family exists through:
+
+```text
+GET /package/{packageId}/dns            # all zones on the package
+GET /package/{packageId}/dns/{zone}     # one zone root
+```
+
+These GET endpoints answer only for zone roots; querying a non-zone subdomain returns HTTP 404.
 
 ## `add-records.php`
 
