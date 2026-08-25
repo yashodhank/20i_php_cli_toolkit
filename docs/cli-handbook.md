@@ -13,6 +13,7 @@ cd /Users/kritananda/Projects/20i_php_cli_toolkit
 | Task | Command | Exit 0 means |
 |---|---|---|
 | Is a domain on any package? | `php scripts/domain/exists.php <domain>` | attached |
+| Dump a domain's DNS records | `php scripts/dns/dump-records.php <domain>` | all records retrieved |
 | Attach one domain | `php scripts/domain/attach-domain-to-package.php <package-domain> <new-domain>` | added + verified |
 | Attach many from a file | `php scripts/domain/attach-domain-to-package.php --skip --yes <package-domain> < domains.txt` | all added (see summary) |
 | Add TXT to one domain | `php scripts/dns/add-records.php <domain> --name @ --type TXT --value "text" --dry-run` | safe to submit |
@@ -389,9 +390,9 @@ Labels: alnum/underscore edges, `-`/`_` interior, ≤63 chars per label, ≤253 
 6. Accepted submissions are journaled for 60 minutes
 7. One immediate StackDNS read per accepted item → `ACCEPTED; VERIFIED` or `ACCEPTED; PUBLICATION PENDING`
 
-**`PUBLICATION PENDING` is success.** StackDNS can take 30+ minutes. It contributes nothing to the failure count.
+**`PUBLICATION PENDING` is success.** StackDNS can take 30+ minutes. It contributes nothing to the failure count. The companion read-only exporter is `scripts/dns/dump-records.php` (§8a).
 
-### Submission journal — state and recovery
+### Submission journal - state and recovery
 
 | Question | Answer |
 |---|---|
@@ -424,6 +425,34 @@ Cron/CI on ephemeral disks: pin `XDG_STATE_HOME` to a persistent path or accept 
 | Journal write fails after API accept | Warning printed; **do not rerun blindly** — 20i accepted it |
 | `--dry-run` with inspect/unresolved errors | Exit 3 despite zero writes |
 | Pending publication after successful accept | Exits 0 (or per other items) |
+
+---
+
+## 8a. `scripts/dns/dump-records.php` (read-only)
+
+Dumps public DNS records for domains from **authoritative StackDNS** (UDP with TCP fallback, the exact code path §8 preflight uses). Never mutates.
+
+```text
+php scripts/dns/dump-records.php [--types <list>] <domain> [<domain> ...]
+php scripts/dns/dump-records.php [--types <list>] < domains.txt
+php scripts/dns/dump-records.php [--types <list>] --all <package-domain>
+```
+
+| Option | Effect |
+|---|---|
+| `--types` | Comma list; default `A,AAAA,CNAME,MX,NS,SOA,TXT` |
+| `--all` | Dump every domain on the package named by the positional domain |
+| `--help`, `-h` | Help |
+
+**Output contract:** one JSON object per domain on stdout (JSON Lines) — `{domain, ok, packageId, records:[{owner,type,ttl,rdata}]}` or `{"ok":false,"error":...}`. Progress goes to stderr, and the script suppresses PHP deprecation notices so stdout stays pure machine-readable JSON safe to pipe.
+
+**Exit codes:** shared table — `0` every domain answered, `3` at least one domain failed (still emits `ok:false` lines), `1` usage/config.
+
+Uses: local DNS inventories, pre-change audits, and post-publication verification ("is my TXT live yet") without touching the submission journal:
+
+```bash
+php scripts/dns/dump-records.php --types TXT example.com
+```
 
 ---
 
