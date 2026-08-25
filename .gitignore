@@ -11,3 +11,4 @@
 # Allow everything in subdirectories
 !*/
 /tmp/
+.repowise/

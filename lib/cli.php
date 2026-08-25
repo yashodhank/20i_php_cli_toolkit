@@ -99,3 +99,65 @@ function confirm(string $prompt): bool
 
     return $response === 'y' || $response === 'yes';
 }
+
+/**
+ * Reduce an API exception to its status and endpoint for a
+ * machine-readable stream. Response bodies carried by HTTPException can
+ * contain server-side detail; callers keep them on STDERR instead.
+ */
+function sanitizeApiError(\Throwable $exception): string
+{
+    $message = $exception->getMessage();
+
+    if (preg_match('/^HTTP error \d+ on \S+/', $message, $matches) === 1) {
+        return rtrim($matches[0], ':');
+    }
+
+    return $message;
+}
+
+/**
+ * Print one domain payload as a JSON Lines row on stdout.
+ *
+ * Invalid UTF-8 in record data is substituted rather than failing the
+ * encode. If encoding still fails outright, the row degrades: records are
+ * dropped, an "encode" error is added, and every other field is preserved
+ * so the domain never vanishes from the stream and its ok/sources state
+ * stays truthful.
+ *
+ * @param array<string,mixed> $payload
+ * @return bool True when the full payload encoded cleanly.
+ */
+function emitDomainLine(array $payload): bool
+{
+    $encoded = json_encode(
+        $payload,
+        JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if ($encoded !== false) {
+        echo $encoded . "\n";
+
+        return true;
+    }
+
+    $degraded = [
+        'domain' => is_string($payload['domain'] ?? null) ? $payload['domain'] : null,
+        'ok' => (bool) ($payload['ok'] ?? false),
+        'packageId' => $payload['packageId'] ?? null,
+        'apiZone' => is_string($payload['apiZone'] ?? null) ? $payload['apiZone'] : null,
+        'sources' => $payload['sources'] ?? new \stdClass(),
+        'records' => [],
+        'errors' => ['encode' => 'record data could not be JSON-encoded'],
+    ];
+
+    foreach ((array) ($payload['errors'] ?? []) as $key => $message) {
+        $degraded['errors'][$key] = $message;
+    }
+
+    $encoded = json_encode($degraded, JSON_UNESCAPED_SLASHES);
+
+    echo ($encoded === false ? '{"domain":null,"ok":false}' : $encoded) . "\n";
+
+    return false;
+}

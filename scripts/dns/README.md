@@ -22,18 +22,22 @@ Records can come from two independent sources, selected with `--source`:
 
 | Source | Mechanism | Coverage |
 |---|---|---|
-| `api` | `GET /package/{packageId}/dns`, the stored zone | Every record type the zone holds, including SRV, wildcard, and subhost entries; reflects zone config even before StackDNS publication completes |
-| `dns` | Authoritative StackDNS queries | Only the requested `--types`; the ground truth for "did this record publish yet?" |
+| `api` | `GET /package/{packageId}/dns`, the stored zone | Every record type the zone holds — SRV, wildcard, subhost entries, CAA and beyond — with **no type filtering unless `--types` is given**; reflects zone config even before StackDNS publication completes |
+| `dns` | Authoritative StackDNS queries | Only the requested `--types` (default `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`); the ground truth for "did this record publish yet?" |
 | `both` | Merge of both (default) | Every record carries a `source` tag |
 
-The `api` source resolves zones across packages: a subdomain attached to one package whose parent zone lives on another package is resolved by walking ancestor names until a covering zone is found. Zone roots return every record in the zone; subdomains return their exact records plus any wildcard records that can cover them. API records carry their raw fields (including the per-record `ref` id used by edit and delete operations) under `fields`.
+The `api` source resolves zones across packages: a subdomain attached to one package whose parent zone lives on another package is resolved by walking ancestor names until a covering zone is found. Zone roots return every record in the zone; subdomains return their exact records plus one-label wildcard coverage (`*.zone` covers `a.zone`, not `a.b.zone`, per RFC 4592). API records carry their raw fields (including the per-record `ref` id used by edit and delete operations) under `fields`.
+
+Query names may carry leading underscores (`_dmarc.example.com`, `_sip._tcp.example.com`) so TXT and SRV owner checks work directly.
 
 ### Output
 
 - Read-only: never calls a mutation endpoint.
-- Default types: `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`.
-- Progress goes to stderr; stdout stays pure JSON Lines (PHP deprecation notices are suppressed in this script for that reason).
+- Default types: `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV` for `dns` queries; the `api` source is unfiltered without an explicit `--types`.
+- Progress goes to stderr; stdout stays pure JSON Lines. All PHP diagnostics — including notices from the vendored client such as its "404 on <url>" message — are routed to stderr or suppressed, never interleaved into stdout.
+- API failure messages in `errors` are reduced to status and endpoint; full exception detail (including any response body) stays on stderr.
 - Per-domain failure produces `{"ok":false,"errors":{...}}` with one message per requested source, and exit status `3` if any domain failed all of its sources; all-success is `0`.
+- `--all` ignores standard input; it takes exactly one positional package domain.
 
 Use it for audits, local inventories, and verifying that a submission published (compare the `dns`-source records against `add-records.php` expectations).
 

@@ -56,6 +56,35 @@ function isValidDomain(string $domain): bool
 }
 
 /**
+ * Determine whether a value is a valid DNS query name.
+ *
+ * Record owner names may carry leading underscores
+ * (_dmarc.example.com, _sip._tcp.example.com), which hostname validation
+ * rejects. Each label follows hostname shape otherwise, except that a
+ * leading underscore is permitted so SRV and TXT owners can be queried.
+ */
+function isValidQueryName(string $domain): bool
+{
+    if ($domain === '' || strlen($domain) > 253 || strpos($domain, '.') === false) {
+        return false;
+    }
+
+    foreach (explode('.', $domain) as $label) {
+        if ($label === '' || strlen($label) > 63) {
+            return false;
+        }
+
+        if (filter_var($label, FILTER_VALIDATE_REGEXP, [
+            'options' => ['regexp' => '/^(?!-)[A-Za-z0-9_-]+(?<!-)$/'],
+        ]) === false) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
  * Convert a response returned by the 20i client to an array.
  *
  * @param mixed $response
