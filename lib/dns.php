@@ -1228,10 +1228,8 @@ function queryAuthoritativeRecords(
 
     return array_values(array_filter(
         $records,
-        static function (array $record) use ($typeName, $recordType): bool {
-            return $record['type'] === $typeName
-                || (strpos($record['type'], 'TYPE') === 0
-                    && $record['type'] === 'TYPE' . $recordType);
+        static function (array $record) use ($typeName): bool {
+            return $record['type'] === $typeName;
         }
     ));
 }

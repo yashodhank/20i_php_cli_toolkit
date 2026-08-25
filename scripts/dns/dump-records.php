@@ -32,7 +32,6 @@ require_once __DIR__ . '/../../lib/package.php';
 use function SoftwareWrap\TwentyI\Cli\fail;
 use function SoftwareWrap\TwentyI\Cli\readLinesFromStdin;
 use function SoftwareWrap\TwentyI\Dns\getStackDnsRecords;
-use function SoftwareWrap\TwentyI\Dns\recordTypeCode;
 use function SoftwareWrap\TwentyI\findPackageByDomain;
 use function SoftwareWrap\TwentyI\getPackageDomains;
 use function SoftwareWrap\TwentyI\getPackageId;
@@ -41,7 +40,6 @@ use function SoftwareWrap\TwentyI\isValidDomain;
 use function SoftwareWrap\TwentyI\normalizeDomain;
 use function SoftwareWrap\TwentyI\responseToArray;
 
-use const SoftwareWrap\TwentyI\Cli\EXIT_ERROR;
 use const SoftwareWrap\TwentyI\Cli\EXIT_PARTIAL_FAILURE;
 use const SoftwareWrap\TwentyI\Cli\EXIT_SUCCESS;
 
@@ -165,19 +163,24 @@ function normalizeApiRecord(array $record): array
  * The zone root is the longest map key that is the domain itself or a
  * suffix of it. Subdomains on a package share their parent zone.
  *
+ * The original map key is returned so callers can look the entry up;
+ * comparisons are performed on normalized names.
+ *
  * @param array<string,mixed> $zoneMap
  */
 function findZoneForDomain(array $zoneMap, string $domain): ?string
 {
     $domain = normalizeDomain($domain);
     $best = null;
+    $bestLength = -1;
 
-    foreach (array_keys($zoneMap) as $zone) {
-        $zone = normalizeDomain((string) $zone);
+    foreach ($zoneMap as $originalKey => $_) {
+        $zone = normalizeDomain((string) $originalKey);
 
         if ($domain === $zone || substr($domain, -strlen('.' . $zone)) === '.' . $zone) {
-            if ($best === null || strlen($zone) > strlen($best)) {
-                $best = $zone;
+            if (strlen($zone) > $bestLength) {
+                $best = (string) $originalKey;
+                $bestLength = strlen($zone);
             }
         }
     }
@@ -248,7 +251,7 @@ function getApiRecordsForDomain(
     }
 
     $domain = normalizeDomain($domain);
-    $isZoneRoot = $domain === $zone;
+    $isZoneRoot = $domain === normalizeDomain((string) $zone);
     $records = [];
 
     foreach ($rawRecords as $record) {
@@ -262,8 +265,7 @@ function getApiRecordsForDomain(
         if (!$isZoneRoot) {
             $isExact = $host === $domain;
             $isCoveringWildcard = strpos($host, '*.') === 0
-                && ($domain === substr($host, 2)
-                    || substr($domain, -strlen(substr($host, 1))) === substr($host, 1));
+                && substr($domain, -strlen(substr($host, 1))) === substr($host, 1);
 
             if (!$isExact && !$isCoveringWildcard) {
                 continue;
@@ -307,13 +309,15 @@ function resolveApiRecordsAcrossPackages(
     }
 
     $tried = [];
+    $attempts = [];
 
     foreach ($candidates as $candidate) {
-        $packageId = $candidate === $domain
-            ? $ownPackageId
-            : (findPackageByDomain($packages, $candidate) !== null
-                ? getPackageId(findPackageByDomain($packages, $candidate))
-                : null);
+        if ($candidate === $domain) {
+            $packageId = $ownPackageId;
+        } else {
+            $package = findPackageByDomain($packages, $candidate);
+            $packageId = $package === null ? null : getPackageId($package);
+        }
 
         if ($packageId === null || isset($tried[$packageId])) {
             continue;
@@ -324,6 +328,8 @@ function resolveApiRecordsAcrossPackages(
         try {
             $zoneMap = getPackageZoneMap($servicesApi, $packageId, $zoneCache);
         } catch (Throwable $exception) {
+            $attempts[] = "package {$packageId}: " . $exception->getMessage();
+
             continue;
         }
 
@@ -331,7 +337,7 @@ function resolveApiRecordsAcrossPackages(
 
         if ($zone !== null) {
             return [
-                'zone' => $zone,
+                'zone' => normalizeDomain((string) $zone),
                 'records' => getApiRecordsForDomain($zoneMap, $domain, $typeFilter),
             ];
         }
@@ -339,6 +345,7 @@ function resolveApiRecordsAcrossPackages(
 
     throw new RuntimeException(
         "No DNS zone covers '{$domain}' on any visible package."
+        . ($attempts === [] ? '' : ' (' . implode(' | ', $attempts) . ')')
     );
 }
 
@@ -346,17 +353,13 @@ function resolveApiRecordsAcrossPackages(
  * Dump all requested record types for one domain from StackDNS.
  *
  * @param array<int,int> $typeCodes
- * @param array<int,string> $typeNames
  * @return array<int,array<string,mixed>>
  */
-function dumpDomainRecordsViaDns(
-    string $domain,
-    array $typeCodes,
-    array $typeNames
-): array {
+function dumpDomainRecordsViaDns(string $domain, array $typeCodes): array
+{
     $records = [];
 
-    foreach ($typeCodes as $i => $typeCode) {
+    foreach ($typeCodes as $typeCode) {
         foreach (getStackDnsRecords($domain, $typeCode) as $record) {
             $record['source'] = 'dns';
             $records[] = $record;
@@ -583,11 +586,7 @@ try {
 
         if ($wantDns) {
             try {
-                $dnsRecords = dumpDomainRecordsViaDns(
-                    $domain,
-                    $typeCodes,
-                    $typeNames
-                );
+                $dnsRecords = dumpDomainRecordsViaDns($domain, $typeCodes);
 
                 $records = array_merge($records, $dnsRecords);
                 $sources['dns'] = true;
