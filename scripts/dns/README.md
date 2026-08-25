@@ -2,7 +2,25 @@
 
 The `scripts/dns/` directory contains command-line tools for managing DNS records on domains attached to 20i hosting packages.
 
-The current implementation supports additive TXT record creation through `add-records.php`.
+The current implementation supports authoritative read-only DNS export through `dump-records.php` and additive TXT record creation through `add-records.php`.
+
+## `dump-records.php`
+
+`dump-records.php` queries StackDNS authoritatively (UDP with TCP fallback, the same code path as `add-records.php` preflight) and prints one JSON object per domain on stdout:
+
+```bash
+php scripts/dns/dump-records.php example.com
+php scripts/dns/dump-records.php --types A,MX,TXT example.com other.example
+php scripts/dns/dump-records.php --all package-example.com
+php scripts/dns/dump-records.php < domains.txt
+```
+
+- Read-only: never calls a mutation endpoint.
+- Default types: `A,AAAA,CNAME,MX,NS,SOA,TXT`.
+- Progress goes to stderr; stdout stays pure JSON Lines (PHP deprecation notices are suppressed in this script for that reason).
+- Per-domain failure produces `{"ok":false,"error":...}` and exit status `3` if any domain failed; all-success is `0`.
+
+Use it for audits, local inventories, and verifying that a submission published (compare against `add-records.php` expectations).
 
 ## Architecture
 

@@ -34,7 +34,14 @@ use RuntimeException;
 const TYPE_TXT = 'TXT';
 
 const DNS_CLASS_IN = 1;
+const DNS_TYPE_A = 1;
+const DNS_TYPE_NS = 2;
+const DNS_TYPE_CNAME = 5;
+const DNS_TYPE_SOA = 6;
+const DNS_TYPE_PTR = 12;
+const DNS_TYPE_MX = 15;
 const DNS_TYPE_TXT = 16;
+const DNS_TYPE_AAAA = 28;
 
 const DNS_FLAG_QR = 0x8000;
 const DNS_FLAG_AA = 0x0400;
@@ -879,4 +886,385 @@ function requirePacketBytes(
             'The DNS response ended unexpectedly.'
         );
     }
+}
+
+/**
+ * Map a record type name (A, AAAA, CNAME, MX, NS, SOA, TXT, PTR) to its code.
+ */
+function recordTypeCode(string $type): int
+{
+    $type = strtoupper(trim($type));
+
+    $map = [
+        'A' => DNS_TYPE_A,
+        'AAAA' => DNS_TYPE_AAAA,
+        'CNAME' => DNS_TYPE_CNAME,
+        'MX' => DNS_TYPE_MX,
+        'NS' => DNS_TYPE_NS,
+        'SOA' => DNS_TYPE_SOA,
+        'TXT' => DNS_TYPE_TXT,
+        'PTR' => DNS_TYPE_PTR,
+    ];
+
+    if (!isset($map[$type])) {
+        throw new InvalidArgumentException(
+            "Unsupported DNS record type '{$type}'."
+        );
+    }
+
+    return $map[$type];
+}
+
+/**
+ * Map a numeric record type code to a display name.
+ */
+function recordTypeName(int $code): string
+{
+    $map = [
+        DNS_TYPE_A => 'A',
+        DNS_TYPE_AAAA => 'AAAA',
+        DNS_TYPE_CNAME => 'CNAME',
+        DNS_TYPE_MX => 'MX',
+        DNS_TYPE_NS => 'NS',
+        DNS_TYPE_SOA => 'SOA',
+        DNS_TYPE_TXT => 'TXT',
+        DNS_TYPE_PTR => 'PTR',
+    ];
+
+    return $map[$code] ?? 'TYPE' . $code;
+}
+
+/**
+ * Decode a possibly compressed DNS name starting at the given offset.
+ *
+ * The offset is advanced past the name the same way skipDnsName() does:
+ * when a compression pointer terminates the name, the offset stops right
+ * past the pointer while the pointer target is resolved separately.
+ */
+function decodeDnsName(string $packet, int &$offset, int $depth = 0): string
+{
+    if ($depth > 32) {
+        throw new RuntimeException(
+            'The DNS response contains a cyclic compression pointer.'
+        );
+    }
+
+    $packetLength = strlen($packet);
+    $labels = [];
+    $labelsSeen = 0;
+
+    while (true) {
+        requirePacketBytes($packetLength, $offset, 1);
+
+        $length = ord($packet[$offset]);
+
+        if (($length & 0xC0) === 0xC0) {
+            requirePacketBytes($packetLength, $offset, 2);
+            $pointerOffset = ($length & 0x3F) << 8 | ord($packet[$offset + 1]);
+            $offset += 2;
+
+            $tail = decodeDnsName($packet, $pointerOffset, $depth + 1);
+
+            if ($tail !== '') {
+                $labels[] = $tail;
+            }
+
+            return implode('.', $labels);
+        }
+
+        if (($length & 0xC0) !== 0) {
+            throw new RuntimeException(
+                'The DNS response contains an unsupported label encoding.'
+            );
+        }
+
+        $offset++;
+
+        if ($length === 0) {
+            return implode('.', $labels);
+        }
+
+        if ($length > 63) {
+            throw new RuntimeException(
+                'The DNS response contains an invalid label length.'
+            );
+        }
+
+        requirePacketBytes(
+            $packetLength,
+            $offset,
+            $length
+        );
+
+        $labels[] = substr($packet, $offset, $length);
+        $offset += $length;
+        $labelsSeen++;
+
+        if ($labelsSeen > 127) {
+            throw new RuntimeException(
+                'The DNS response contains too many labels.'
+            );
+        }
+    }
+}
+
+/**
+ * Parse every answer-section resource record from a DNS response.
+ *
+ * RDATA is decoded for common types. Other types surface as lowercase hex.
+ *
+ * @return array<int,array{owner:string,type:string,ttl:int,rdata:string}>
+ */
+function parseResourceRecords(string $response, array $header): array
+{
+    $offset = 12;
+    $responseLength = strlen($response);
+
+    for ($index = 0; $index < $header['qdcount']; $index++) {
+        skipDnsName($response, $offset);
+        requirePacketBytes($responseLength, $offset, 4);
+        $offset += 4;
+    }
+
+    $records = [];
+
+    for ($index = 0; $index < $header['ancount']; $index++) {
+        $owner = decodeDnsName($response, $offset);
+        requirePacketBytes($responseLength, $offset, 10);
+
+        $recordHeader = unpack(
+            'ntype/nclass/Nttl/ndlength',
+            substr($response, $offset, 10)
+        );
+
+        if (!is_array($recordHeader)) {
+            throw new RuntimeException(
+                'Unable to parse a DNS resource-record header.'
+            );
+        }
+
+        $offset += 10;
+
+        $type = (int) $recordHeader['type'];
+        $dataLength = (int) $recordHeader['dlength'];
+        requirePacketBytes($responseLength, $offset, $dataLength);
+
+        $rdataOffset = $offset;
+        $offset += $dataLength;
+
+        if ((int) $recordHeader['class'] !== DNS_CLASS_IN) {
+            continue;
+        }
+
+        switch ($type) {
+            case DNS_TYPE_A:
+                if ($dataLength !== 4) {
+                    continue 2;
+                }
+                $rdata = implode(
+                    '.',
+                    array_map('ord', str_split(
+                        substr($response, $rdataOffset, 4)
+                    ))
+                );
+                break;
+
+            case DNS_TYPE_AAAA:
+                if ($dataLength !== 16) {
+                    continue 2;
+                }
+                $rdata = inet_ntop(substr($response, $rdataOffset, 16));
+                if ($rdata === false) {
+                    continue 2;
+                }
+                break;
+
+            case DNS_TYPE_CNAME:
+            case DNS_TYPE_NS:
+            case DNS_TYPE_PTR:
+                $targetOffset = $rdataOffset;
+                $rdata = decodeDnsName($response, $targetOffset);
+                break;
+
+            case DNS_TYPE_MX:
+                if ($dataLength < 3) {
+                    continue 2;
+                }
+                $preference = unpack(
+                    'n',
+                    substr($response, $rdataOffset, 2)
+                )[1];
+                $exchangeOffset = $rdataOffset + 2;
+                $exchange = decodeDnsName($response, $exchangeOffset);
+                $rdata = $preference . ' ' . $exchange;
+                break;
+
+            case DNS_TYPE_SOA:
+                $mnameOffset = $rdataOffset;
+                $mname = decodeDnsName($response, $mnameOffset);
+                $rname = decodeDnsName($response, $mnameOffset);
+                if ($mnameOffset + 20 > $rdataOffset + $dataLength) {
+                    continue 2;
+                }
+                $soaFields = unpack(
+                    'Nserial/Nrefresh/Nretry/Nexpire/Nminimum',
+                    substr($response, $mnameOffset, 20)
+                );
+                $rdata = $mname . ' ' . $rname . ' '
+                    . $soaFields['serial'] . ' ' . $soaFields['refresh'] . ' '
+                    . $soaFields['retry'] . ' ' . $soaFields['expire'] . ' '
+                    . $soaFields['minimum'];
+                break;
+
+            case DNS_TYPE_TXT:
+                $rdata = parseTxtRdata(
+                    substr($response, $rdataOffset, $dataLength)
+                );
+                break;
+
+            default:
+                $rdata = bin2hex(substr($response, $rdataOffset, $dataLength));
+                break;
+        }
+
+        $records[] = [
+            'owner' => $owner,
+            'type' => recordTypeName($type),
+            'ttl' => (int) $recordHeader['ttl'],
+            'rdata' => $rdata,
+        ];
+    }
+
+    return $records;
+}
+
+/**
+ * Query one authoritative nameserver for records of a given type.
+ *
+ * A valid response with no matching answers, or NXDOMAIN, returns an
+ * empty array. Truncated responses retry over TCP like the TXT path.
+ *
+ * @return array<int,array{owner:string,type:string,ttl:int,rdata:string}>
+ */
+function queryAuthoritativeRecords(
+    string $nameserver,
+    string $fqdn,
+    int $recordType,
+    int $timeoutSeconds = DEFAULT_DNS_TIMEOUT_SECONDS
+): array {
+    $fqdn = strtolower(rtrim(trim($fqdn), '.'));
+
+    if ($fqdn === '') {
+        throw new InvalidArgumentException('The DNS query name cannot be empty.');
+    }
+
+    if ($timeoutSeconds < 1) {
+        throw new InvalidArgumentException(
+            'The DNS timeout must be at least one second.'
+        );
+    }
+
+    $transactionId = random_int(0, 65535);
+    $query = buildDnsQueryPacket(
+        $transactionId,
+        $fqdn,
+        $recordType,
+        DNS_CLASS_IN
+    );
+
+    $response = sendUdpDnsQuery(
+        $nameserver,
+        $query,
+        $timeoutSeconds
+    );
+
+    $header = parseDnsHeader($response);
+    validateDnsResponseHeader($header, $transactionId, $nameserver);
+
+    if (($header['flags'] & DNS_FLAG_TC) !== 0) {
+        $response = sendTcpDnsQuery(
+            $nameserver,
+            $query,
+            $timeoutSeconds
+        );
+
+        $header = parseDnsHeader($response);
+        validateDnsResponseHeader($header, $transactionId, $nameserver);
+    }
+
+    $rcode = $header['flags'] & DNS_RCODE_MASK;
+
+    if ($rcode === DNS_RCODE_NXDOMAIN) {
+        return [];
+    }
+
+    if ($rcode !== DNS_RCODE_NOERROR) {
+        throw new RuntimeException(
+            "DNS server '{$nameserver}' returned response code {$rcode}."
+        );
+    }
+
+    $records = parseResourceRecords($response, $header);
+    $typeName = recordTypeName($recordType);
+
+    return array_values(array_filter(
+        $records,
+        static function (array $record) use ($typeName, $recordType): bool {
+            return $record['type'] === $typeName
+                || (strpos($record['type'], 'TYPE') === 0
+                    && $record['type'] === 'TYPE' . $recordType);
+        }
+    ));
+}
+
+/**
+ * Query StackDNS for records of a given type at a fully qualified name.
+ *
+ * Nameservers are tried in order until one returns a valid authoritative
+ * response.
+ *
+ * @param array<int,string> $nameservers
+ * @return array<int,array{owner:string,type:string,ttl:int,rdata:string}>
+ */
+function getStackDnsRecords(
+    string $fqdn,
+    int $recordType,
+    array $nameservers = DEFAULT_STACKDNS_NAMESERVERS,
+    int $timeoutSeconds = DEFAULT_DNS_TIMEOUT_SECONDS
+): array {
+    $fqdn = strtolower(rtrim(trim($fqdn), '.'));
+
+    if ($fqdn === '') {
+        throw new InvalidArgumentException('The DNS query name cannot be empty.');
+    }
+
+    if ($nameservers === []) {
+        throw new InvalidArgumentException(
+            'At least one authoritative nameserver must be provided.'
+        );
+    }
+
+    $errors = [];
+
+    foreach ($nameservers as $nameserver) {
+        if (!is_string($nameserver) || trim($nameserver) === '') {
+            continue;
+        }
+
+        try {
+            return queryAuthoritativeRecords(
+                trim($nameserver),
+                $fqdn,
+                $recordType,
+                $timeoutSeconds
+            );
+        } catch (\Throwable $exception) {
+            $errors[] = trim($nameserver) . ': ' . $exception->getMessage();
+        }
+    }
+
+    throw new RuntimeException(
+        'Unable to retrieve authoritative DNS records. '
+        . implode(' | ', $errors)
+    );
 }
