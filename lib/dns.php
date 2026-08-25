@@ -42,6 +42,7 @@ const DNS_TYPE_PTR = 12;
 const DNS_TYPE_MX = 15;
 const DNS_TYPE_TXT = 16;
 const DNS_TYPE_AAAA = 28;
+const DNS_TYPE_SRV = 33;
 
 const DNS_FLAG_QR = 0x8000;
 const DNS_FLAG_AA = 0x0400;
@@ -904,6 +905,7 @@ function recordTypeCode(string $type): int
         'SOA' => DNS_TYPE_SOA,
         'TXT' => DNS_TYPE_TXT,
         'PTR' => DNS_TYPE_PTR,
+        'SRV' => DNS_TYPE_SRV,
     ];
 
     if (!isset($map[$type])) {
@@ -929,6 +931,7 @@ function recordTypeName(int $code): string
         DNS_TYPE_SOA => 'SOA',
         DNS_TYPE_TXT => 'TXT',
         DNS_TYPE_PTR => 'PTR',
+        DNS_TYPE_SRV => 'SRV',
     ];
 
     return $map[$code] ?? 'TYPE' . $code;
@@ -1120,6 +1123,22 @@ function parseResourceRecords(string $response, array $header): array
                 $rdata = parseTxtRdata(
                     substr($response, $rdataOffset, $dataLength)
                 );
+                break;
+
+            case DNS_TYPE_SRV:
+                if ($dataLength < 7) {
+                    continue 2;
+                }
+                $srvFields = unpack(
+                    'npriority/nweight/nport',
+                    substr($response, $rdataOffset, 6)
+                );
+                $srvTargetOffset = $rdataOffset + 6;
+                $srvTarget = decodeDnsName($response, $srvTargetOffset);
+                $rdata = $srvFields['priority'] . ' '
+                    . $srvFields['weight'] . ' '
+                    . $srvFields['port'] . ' '
+                    . $srvTarget;
                 break;
 
             default:
