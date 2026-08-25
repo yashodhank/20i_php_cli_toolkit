@@ -430,28 +430,39 @@ Cron/CI on ephemeral disks: pin `XDG_STATE_HOME` to a persistent path or accept 
 
 ## 8a. `scripts/dns/dump-records.php` (read-only)
 
-Dumps public DNS records for domains from **authoritative StackDNS** (UDP with TCP fallback, the exact code path §8 preflight uses). Never mutates.
+Dumps public DNS records for domains from two independent sources. Never mutates.
 
 ```text
-php scripts/dns/dump-records.php [--types <list>] <domain> [<domain> ...]
-php scripts/dns/dump-records.php [--types <list>] < domains.txt
-php scripts/dns/dump-records.php [--types <list>] --all <package-domain>
+php scripts/dns/dump-records.php [--source <api|dns|both>] [--types <list>] <domain> [<domain> ...]
+php scripts/dns/dump-records.php [--source <api|dns|both>] [--types <list>] < domains.txt
+php scripts/dns/dump-records.php [--source <api|dns|both>] [--types <list>] --all <package-domain>
 ```
 
 | Option | Effect |
 |---|---|
-| `--types` | Comma list; default `A,AAAA,CNAME,MX,NS,SOA,TXT` |
+| `--source` | `api` (20i stored zone), `dns` (authoritative StackDNS), or `both` (default) |
+| `--types` | Comma list; default `A,AAAA,CNAME,MX,NS,SOA,TXT,SRV`. Filters the `api` read too |
 | `--all` | Dump every domain on the package named by the positional domain |
 | `--help`, `-h` | Help |
 
-**Output contract:** one JSON object per domain on stdout (JSON Lines) — `{domain, ok, packageId, records:[{owner,type,ttl,rdata}]}` or `{"ok":false,"error":...}`. Progress goes to stderr, and the script suppresses PHP deprecation notices so stdout stays pure machine-readable JSON safe to pipe.
+**Sources:**
 
-**Exit codes:** shared table — `0` every domain answered, `3` at least one domain failed (still emits `ok:false` lines), `1` usage/config.
+- **api** reads the stored zone via `GET /package/{packageId}/dns` and covers every record type the zone holds — including SRV, wildcard (`*.example.com`), and subhost entries the packet path cannot enumerate. Subdomains attached to one package whose parent zone lives on another are resolved by walking ancestor names across packages. API records keep their raw fields under `fields`, including the per-record `ref` id that edit/delete operations key on. This is zone *config*: a just-submitted record appears here immediately even while StackDNS publication is still pending. Zone GETs answer only for zone roots.
+- **dns** sends authoritative StackDNS queries (UDP with TCP fallback, the exact code path §8 preflight uses) for the requested `--types` only. This is the ground truth for "did it publish yet?"
+- **both** merges them; every record carries a `source` tag.
 
-Uses: local DNS inventories, pre-change audits, and post-publication verification ("is my TXT live yet") without touching the submission journal:
+**Output contract:** one JSON object per domain on stdout (JSON Lines) — `{domain, ok, packageId, apiZone, sources:{api,dns}, records:[{owner,type,ttl,rdata,source,...}]}` with per-source failure messages under `errors`. Progress goes to stderr, and the script suppresses PHP deprecation notices so stdout stays pure machine-readable JSON safe to pipe.
+
+**Exit codes:** shared table — `0` every domain answered by at least one requested source, `3` at least one domain failed all of its sources (still emits `ok:false` lines), `1` usage/config.
+
+Uses: local DNS inventories, pre-change audits, full-zone export (`--source api`), and post-publication verification ("is my TXT live yet") without touching the submission journal:
 
 ```bash
-php scripts/dns/dump-records.php --types TXT example.com
+# Full stored zone, all types incl. SRV/wildcards:
+php scripts/dns/dump-records.php --source api example.com
+
+# Is my TXT live yet?
+php scripts/dns/dump-records.php --source dns --types TXT example.com
 ```
 
 ---
