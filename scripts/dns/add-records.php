@@ -41,6 +41,7 @@ use function SoftwareWrap\TwentyI\Cli\fail;
 use function SoftwareWrap\TwentyI\Cli\readLinesFromStdin;
 use function SoftwareWrap\TwentyI\Dns\buildAddTxtRecordPayload;
 use function SoftwareWrap\TwentyI\Dns\buildRecordFqdn;
+use function SoftwareWrap\TwentyI\Dns\normalizeRecordNameForDomain;
 use function SoftwareWrap\TwentyI\Dns\requireSupportedRecordType;
 use function SoftwareWrap\TwentyI\Dns\requireValidRecordName;
 use function SoftwareWrap\TwentyI\Dns\requireValidTxtValue;
@@ -184,62 +185,6 @@ function validateDomains(array $domains): array
     }
 
     return array_keys($unique);
-}
-
-/**
- * Normalize a user-supplied owner name for one target domain.
- *
- * Accepted forms include @, an empty string, the zone domain, an in-zone
- * fully qualified name, and an ordinary relative owner name. A trailing-dot
- * fully qualified name must belong to the target zone. Wildcards are not
- * supported by this initial TXT-only command.
- */
-function normalizeRecordNameForDomain(
-    string $domain,
-    string $recordName
-): string {
-    $domain = normalizeDomain($domain);
-    $recordName = trim($recordName);
-
-    if ($recordName === '' || $recordName === '@') {
-        return '@';
-    }
-
-    if (strpos($recordName, '*') !== false) {
-        throw new InvalidArgumentException(
-            'Wildcard DNS owner names are not currently supported.'
-        );
-    }
-
-    $isAbsolute = substr($recordName, -1) === '.';
-    $normalizedName = strtolower(rtrim($recordName, '.'));
-
-    if ($normalizedName === $domain) {
-        return '@';
-    }
-
-    $zoneSuffix = '.' . $domain;
-
-    if (
-        strlen($normalizedName) > strlen($zoneSuffix)
-        && substr($normalizedName, -strlen($zoneSuffix)) === $zoneSuffix
-    ) {
-        $relativeName = substr(
-            $normalizedName,
-            0,
-            strlen($normalizedName) - strlen($zoneSuffix)
-        );
-
-        return requireValidRecordName($relativeName);
-    }
-
-    if ($isAbsolute) {
-        throw new InvalidArgumentException(
-            "DNS owner name '{$recordName}' is outside the target zone '{$domain}'."
-        );
-    }
-
-    return requireValidRecordName($normalizedName);
 }
 
 /**
