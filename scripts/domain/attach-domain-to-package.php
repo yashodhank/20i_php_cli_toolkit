@@ -34,6 +34,7 @@ require_once __DIR__ . '/../../lib/package.php';
 use function SoftwareWrap\TwentyI\Cli\confirm;
 use function SoftwareWrap\TwentyI\Cli\fail;
 use function SoftwareWrap\TwentyI\Cli\readLinesFromStdin;
+use function SoftwareWrap\TwentyI\addNamesToPackage;
 use function SoftwareWrap\TwentyI\findPackageByDomain;
 use function SoftwareWrap\TwentyI\getPackageId;
 use function SoftwareWrap\TwentyI\getPackageSelector;
@@ -350,14 +351,7 @@ try {
         fflush(STDOUT);
 
         try {
-            $servicesApi->postWithFields(
-                '/package/' . rawurlencode($targetPackageId) . '/names',
-                [
-                    'add' => [$domain],
-                    'rem' => [],
-                    'chg' => null,
-                ]
-            );
+            addNamesToPackage($servicesApi, $targetPackageId, [$domain]);
 
             if (!verifyDomainOnPackage($servicesApi, $domain, $targetPackageId)) {
                 throw new RuntimeException(
