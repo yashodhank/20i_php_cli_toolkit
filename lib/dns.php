@@ -228,6 +228,62 @@ function buildAddTxtRecordPayload(string $name, string $value): array
 }
 
 /**
+ * Normalize a user-supplied owner name for one target domain.
+ *
+ * Accepted forms include @, an empty string, the zone domain, an in-zone
+ * fully qualified name, and an ordinary relative owner name. A trailing-dot
+ * fully qualified name must belong to the target zone. Wildcards are not
+ * supported by the current commands.
+ */
+function normalizeRecordNameForDomain(
+    string $domain,
+    string $recordName
+): string {
+    $domain = \SoftwareWrap\TwentyI\normalizeDomain($domain);
+    $recordName = trim($recordName);
+
+    if ($recordName === '' || $recordName === '@') {
+        return '@';
+    }
+
+    if (strpos($recordName, '*') !== false) {
+        throw new InvalidArgumentException(
+            'Wildcard DNS owner names are not currently supported.'
+        );
+    }
+
+    $isAbsolute = substr($recordName, -1) === '.';
+    $normalizedName = strtolower(rtrim($recordName, '.'));
+
+    if ($normalizedName === $domain) {
+        return '@';
+    }
+
+    $zoneSuffix = '.' . $domain;
+
+    if (
+        strlen($normalizedName) > strlen($zoneSuffix)
+        && substr($normalizedName, -strlen($zoneSuffix)) === $zoneSuffix
+    ) {
+        $relativeName = substr(
+            $normalizedName,
+            0,
+            strlen($normalizedName) - strlen($zoneSuffix)
+        );
+
+        return requireValidRecordName($relativeName);
+    }
+
+    if ($isAbsolute) {
+        throw new InvalidArgumentException(
+            "DNS owner name '{$recordName}' is outside the target zone '{$domain}'."
+        );
+    }
+
+    return requireValidRecordName($normalizedName);
+}
+
+/**
  * Build the fully qualified owner name for a record.
  */
 function buildRecordFqdn(string $domain, string $recordName): string
@@ -1232,6 +1288,581 @@ function queryAuthoritativeRecords(
             return $record['type'] === $typeName;
         }
     ));
+}
+
+/*
+ * ---------------------------------------------------------------------
+ * Mutation helpers: record identity, matching, payloads, guards,
+ * pre-change snapshots, and the local mutation journal.
+ *
+ * Everything below except getPackageZoneMap() is pure and unit-testable
+ * without network access.
+ * ---------------------------------------------------------------------
+ */
+
+const DELETABLE_RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV'];
+
+/**
+ * Validate and return a record type eligible for deletion.
+ *
+ * SOA and NS carry dedicated refusals: SOA records are never deletable,
+ * and NS deletion is unsupported entirely so the zone apex can never be
+ * stripped of its delegation.
+ */
+function requireDeletableRecordType(string $type): string
+{
+    $type = normalizeRecordType($type);
+
+    if ($type === 'SOA') {
+        throw new InvalidArgumentException(
+            'SOA records can never be deleted.'
+        );
+    }
+
+    if ($type === 'NS') {
+        throw new InvalidArgumentException(
+            'NS record deletion is not supported; zone-apex NS records '
+            . 'must never be deleted.'
+        );
+    }
+
+    if (!in_array($type, DELETABLE_RECORD_TYPES, true)) {
+        throw new InvalidArgumentException(
+            "Record type '{$type}' is not supported for deletion. "
+            . 'Supported types: ' . implode(', ', DELETABLE_RECORD_TYPES)
+        );
+    }
+
+    return $type;
+}
+
+/**
+ * Extract the stable per-record ref used by the 20i delete diff.
+ *
+ * Accepts a normalized record (raw record preserved under 'fields') or a
+ * raw zone record. Every live record carries a numeric ref except SOA,
+ * whose ref is null. Refs are returned as strings because the delete
+ * payload sends them as strings.
+ */
+function extractRecordRef(array $record): ?string
+{
+    $fields = $record;
+
+    if (isset($record['fields']) && is_array($record['fields'])) {
+        $fields = $record['fields'];
+    }
+
+    $ref = isset($fields['ref']) ? $fields['ref'] : null;
+
+    if (is_int($ref)) {
+        return (string) $ref;
+    }
+
+    if (is_string($ref) && trim($ref) !== '') {
+        return trim($ref);
+    }
+
+    return null;
+}
+
+/**
+ * Determine whether two rdata values are equivalent for one record type.
+ *
+ * TXT uses the shared TXT normalization. Other types compare
+ * case-insensitively after trimming, which tolerates the case-insensitive
+ * hostnames in CNAME/MX/SRV targets.
+ */
+function rdataValuesEqual(string $type, string $left, string $right): bool
+{
+    if (normalizeRecordType($type) === TYPE_TXT) {
+        return txtValuesEqual($left, $right);
+    }
+
+    return strcasecmp(trim($left), trim($right)) === 0;
+}
+
+/**
+ * Find normalized zone records matching an owner, type, and optional value.
+ *
+ * Records are the normalizeApiRecord() shape. The owner is interpreted
+ * with normalizeRecordNameForDomain() semantics against the target
+ * domain; types compare case-insensitively; a null value matches every
+ * record of that owner and type.
+ *
+ * @param array<int,array<string,mixed>> $records
+ * @return array<int,array<string,mixed>>
+ */
+function findMatchingApiRecords(
+    array $records,
+    string $domain,
+    string $recordName,
+    string $type,
+    ?string $value = null
+): array {
+    $type = normalizeRecordType($type);
+    $normalizedOwner = normalizeRecordNameForDomain($domain, $recordName);
+    $targetFqdn = buildRecordFqdn($domain, $normalizedOwner);
+    $matches = [];
+
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+
+        $recordType = normalizeRecordType((string) ($record['type'] ?? ''));
+
+        if ($recordType !== $type) {
+            continue;
+        }
+
+        $owner = \SoftwareWrap\TwentyI\normalizeDomain(
+            (string) ($record['owner'] ?? '')
+        );
+
+        if ($owner !== $targetFqdn) {
+            continue;
+        }
+
+        if (
+            $value !== null
+            && !rdataValuesEqual($type, (string) ($record['rdata'] ?? ''), $value)
+        ) {
+            continue;
+        }
+
+        $matches[] = $record;
+    }
+
+    return $matches;
+}
+
+/**
+ * Guard a set of matched records against forbidden deletions.
+ *
+ * SOA records are never deletable. NS records at the zone apex are
+ * refused entirely; deleting them would break the zone's delegation.
+ *
+ * @param array<int,array<string,mixed>> $records
+ */
+function assertRecordsDeletable(array $records, string $zoneApex): void
+{
+    $zoneApex = \SoftwareWrap\TwentyI\normalizeDomain($zoneApex);
+
+    foreach ($records as $record) {
+        $type = normalizeRecordType((string) ($record['type'] ?? ''));
+        $owner = \SoftwareWrap\TwentyI\normalizeDomain(
+            (string) ($record['owner'] ?? '')
+        );
+
+        if ($type === 'SOA') {
+            throw new RuntimeException(
+                'Refusing to delete a SOA record.'
+            );
+        }
+
+        if ($type === 'NS' && $owner === $zoneApex) {
+            throw new RuntimeException(
+                "Refusing to delete NS records at the zone apex '{$zoneApex}'."
+            );
+        }
+    }
+}
+
+/**
+ * Require exactly one matched record, for the atomic replace flow.
+ *
+ * Zero matches and multiple matches carry distinct messages so operators
+ * can tell "nothing to replace" apart from "ambiguous target".
+ *
+ * @param array<int,array<string,mixed>> $matches
+ * @return array<string,mixed>
+ */
+function requireExactlyOneMatch(array $matches, string $description): array
+{
+    $count = count($matches);
+
+    if ($count === 0) {
+        throw new RuntimeException(
+            "No record matches {$description}."
+        );
+    }
+
+    if ($count > 1) {
+        throw new RuntimeException(
+            "{$count} records match {$description}; refusing an ambiguous replace."
+        );
+    }
+
+    $matches = array_values($matches);
+
+    return $matches[0];
+}
+
+/**
+ * Build the 20i DNS diff payload that deletes records by ref.
+ *
+ * The 'new' member is the empty type map matching
+ * buildAddTxtRecordPayload()'s shape; refs are sent as strings.
+ *
+ * @param array<int,string|int> $refs
+ * @return array<string,mixed>
+ */
+function buildDeletePayload(array $refs): array
+{
+    $deleteRefs = [];
+
+    foreach ($refs as $ref) {
+        if (!is_string($ref) && !is_int($ref)) {
+            throw new InvalidArgumentException(
+                'Record refs must be strings or integers.'
+            );
+        }
+
+        $ref = trim((string) $ref);
+
+        if ($ref === '') {
+            throw new InvalidArgumentException(
+                'Record refs cannot be empty.'
+            );
+        }
+
+        $deleteRefs[] = $ref;
+    }
+
+    if ($deleteRefs === []) {
+        throw new InvalidArgumentException(
+            'The delete payload requires at least one record ref.'
+        );
+    }
+
+    return [
+        'conflictPolicy' => 'reject',
+        'insertPolicy' => 'append',
+        'new' => [
+            'AAAA' => [],
+            'A' => [],
+            'CNAME' => [],
+            'MX' => [],
+            'TXT' => [],
+            'SRV' => [],
+        ],
+        'delete' => $deleteRefs,
+    ];
+}
+
+/**
+ * Build the atomic 20i DNS diff payload that replaces one TXT record.
+ *
+ * One POST carries both the new TXT record and the deletion of the
+ * matched ref, so the zone never holds zero or two copies between calls.
+ *
+ * @return array<string,mixed>
+ */
+function buildReplacePayload(
+    string $name,
+    string $value,
+    string $ref
+): array {
+    $ref = trim($ref);
+
+    if ($ref === '') {
+        throw new InvalidArgumentException(
+            'The replaced record ref cannot be empty.'
+        );
+    }
+
+    return [
+        'conflictPolicy' => 'reject',
+        'insertPolicy' => 'append',
+        'new' => [
+            'AAAA' => [],
+            'A' => [],
+            'CNAME' => [],
+            'MX' => [],
+            'TXT' => [
+                buildTxtRecord($name, $value),
+            ],
+            'SRV' => [],
+        ],
+        'delete' => [$ref],
+    ];
+}
+
+/**
+ * Fetch the zone map for a package, with a per-process cache.
+ *
+ * GET /package/{id}/dns returns an entry per zone root on the package.
+ *
+ * @param array<string,array<string,mixed>> $cache
+ * @return array<string,mixed>
+ */
+function getPackageZoneMap(
+    \TwentyI\API\Services $servicesApi,
+    string $packageId,
+    array &$cache
+): array {
+    if (isset($cache[$packageId])) {
+        return $cache[$packageId];
+    }
+
+    $response = \SoftwareWrap\TwentyI\responseToArray(
+        $servicesApi->getWithFields(
+            '/package/' . rawurlencode($packageId) . '/dns'
+        )
+    );
+
+    $cache[$packageId] = $response;
+
+    return $response;
+}
+
+/**
+ * Return the local state directory used for journals and snapshots.
+ *
+ * Resolution matches the add-records submission journal: XDG_STATE_HOME,
+ * then ~/.local/state, then LOCALAPPDATA/APPDATA, then the system
+ * temporary directory.
+ */
+function getStateDirectory(): string
+{
+    $stateHome = getenv('XDG_STATE_HOME');
+
+    if (is_string($stateHome) && trim($stateHome) !== '') {
+        return rtrim($stateHome, DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR . '20i-cli';
+    }
+
+    $home = getenv('HOME');
+
+    if (is_string($home) && trim($home) !== '') {
+        return rtrim($home, DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR . '.local'
+            . DIRECTORY_SEPARATOR . 'state'
+            . DIRECTORY_SEPARATOR . '20i-cli';
+    }
+
+    $appData = getenv('LOCALAPPDATA') ?: getenv('APPDATA');
+
+    if (is_string($appData) && trim($appData) !== '') {
+        return rtrim($appData, DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR . '20i-cli';
+    }
+
+    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR)
+        . DIRECTORY_SEPARATOR . '20i-cli';
+}
+
+/**
+ * Return the directory holding pre-change zone snapshots.
+ */
+function getSnapshotDirectory(): string
+{
+    return getStateDirectory() . DIRECTORY_SEPARATOR . 'snapshots';
+}
+
+/**
+ * Build a snapshot filename: <domain>-<utcstamp>.jsonl.
+ */
+function buildSnapshotFilename(string $domain, ?int $timestamp = null): string
+{
+    $domain = \SoftwareWrap\TwentyI\normalizeDomain($domain);
+
+    if ($domain === '') {
+        throw new InvalidArgumentException(
+            'The snapshot domain cannot be empty.'
+        );
+    }
+
+    $stamp = gmdate('Ymd\THis\Z', $timestamp === null ? time() : $timestamp);
+
+    return $domain . '-' . $stamp . '.jsonl';
+}
+
+/**
+ * Write dump-records-shaped rows to a snapshot file (JSON Lines).
+ *
+ * The directory is created 0700 and the file written 0600. Any failure
+ * throws; callers must abort the domain's mutation when this fails.
+ *
+ * @param array<int,array<string,mixed>> $rows
+ */
+function writeSnapshotFile(string $path, array $rows): void
+{
+    if ($rows === []) {
+        throw new InvalidArgumentException(
+            'A snapshot requires at least one row.'
+        );
+    }
+
+    $directory = dirname($path);
+
+    if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
+        throw new RuntimeException(
+            "Unable to create snapshot directory '{$directory}'."
+        );
+    }
+
+    $lines = '';
+
+    foreach ($rows as $row) {
+        $encoded = json_encode(
+            $row,
+            JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+
+        if ($encoded === false) {
+            throw new RuntimeException(
+                "Unable to encode a snapshot row for '{$path}'."
+            );
+        }
+
+        $lines .= $encoded . "\n";
+    }
+
+    if (file_put_contents($path, $lines, LOCK_EX) === false) {
+        throw new RuntimeException(
+            "Unable to write snapshot file '{$path}'."
+        );
+    }
+
+    @chmod($path, 0600);
+}
+
+/**
+ * Return the path of a named mutation journal in the state directory.
+ */
+function getMutationJournalPath(string $basename): string
+{
+    $basename = trim($basename);
+
+    if (
+        $basename === ''
+        || strpbrk($basename, '/\\') !== false
+    ) {
+        throw new InvalidArgumentException(
+            'The journal basename must be a bare filename.'
+        );
+    }
+
+    return getStateDirectory() . DIRECTORY_SEPARATOR . $basename;
+}
+
+/**
+ * Read a mutation journal and discard entries older than the window.
+ *
+ * Same mechanism as the add-records submission journal.
+ *
+ * @return array<string,array<string,mixed>>
+ */
+function readMutationJournal(string $path, int $windowSeconds): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $contents = file_get_contents($path);
+
+    if ($contents === false) {
+        throw new RuntimeException(
+            "Unable to read DNS mutation journal '{$path}'."
+        );
+    }
+
+    if (trim($contents) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+
+    if (!is_array($decoded)) {
+        throw new RuntimeException(
+            "DNS mutation journal '{$path}' is invalid."
+        );
+    }
+
+    $cutoff = time() - $windowSeconds;
+    $active = [];
+
+    foreach ($decoded as $key => $entry) {
+        if (!is_string($key) || !is_array($entry)) {
+            continue;
+        }
+
+        $submittedAt = isset($entry['submittedAt']) ? $entry['submittedAt'] : null;
+
+        if (is_int($submittedAt) && $submittedAt >= $cutoff) {
+            $active[$key] = $entry;
+        }
+    }
+
+    return $active;
+}
+
+/**
+ * Persist one journal entry atomically (0700 directory, 0600 file).
+ *
+ * @param array<string,array<string,mixed>> $journal
+ * @param array<string,mixed> $entry
+ */
+function saveMutationJournalEntry(
+    string $path,
+    array &$journal,
+    string $key,
+    array $entry
+): void {
+    $directory = dirname($path);
+
+    if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
+        throw new RuntimeException(
+            "Unable to create DNS mutation journal directory '{$directory}'."
+        );
+    }
+
+    $entry['submittedAt'] = isset($entry['submittedAt']) && is_int($entry['submittedAt'])
+        ? $entry['submittedAt']
+        : time();
+    $entry['submittedAtIso8601'] = isset($entry['submittedAtIso8601'])
+        ? $entry['submittedAtIso8601']
+        : gmdate('c', $entry['submittedAt']);
+
+    $journal[$key] = $entry;
+
+    $temporaryPath = $path . '.tmp-' . getmypid();
+    $json = json_encode(
+        $journal,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+    ) . "\n";
+
+    if (file_put_contents($temporaryPath, $json, LOCK_EX) === false) {
+        throw new RuntimeException(
+            "Unable to write DNS mutation journal '{$temporaryPath}'."
+        );
+    }
+
+    @chmod($temporaryPath, 0600);
+
+    if (!rename($temporaryPath, $path)) {
+        @unlink($temporaryPath);
+        throw new RuntimeException(
+            "Unable to replace DNS mutation journal '{$path}'."
+        );
+    }
+}
+
+/**
+ * Format the age of a journal entry for operator output.
+ */
+function formatMutationAge(int $submittedAt): string
+{
+    $seconds = max(0, time() - $submittedAt);
+
+    if ($seconds < 60) {
+        return $seconds . ' second' . ($seconds === 1 ? '' : 's');
+    }
+
+    $minutes = intdiv($seconds, 60);
+
+    return $minutes . ' minute' . ($minutes === 1 ? '' : 's');
 }
 
 /**

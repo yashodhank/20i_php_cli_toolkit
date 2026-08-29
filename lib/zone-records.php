@@ -21,6 +21,22 @@ declare(strict_types=1);
 namespace SoftwareWrap\TwentyI\Dns;
 
 /**
+ * Determine whether an array is a zero-based list.
+ *
+ * PHP 7.4-compatible replacement for array_is_list() (PHP 8.1+).
+ *
+ * @param array<mixed> $value
+ */
+function isListArray(array $value): bool
+{
+    if ($value === []) {
+        return true;
+    }
+
+    return array_keys($value) === range(0, count($value) - 1);
+}
+
+/**
  * Normalize one raw record from the 20i zone API.
  *
  * @param array<string,mixed> $record
@@ -174,7 +190,7 @@ function getApiRecordsForDomain(
         $candidate = $zoneEntry['records'] ?? $zoneEntry;
 
         if (is_array($candidate)) {
-            if (!array_is_list($candidate)) {
+            if (!isListArray($candidate)) {
                 throw new \RuntimeException(
                     "Unexpected record shape for zone '{$zone}': expected a"
                     . ' list of records, found a keyed map.'
