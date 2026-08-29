@@ -2,7 +2,7 @@
 
 The `scripts/dns/` directory contains command-line tools for managing DNS records on domains attached to 20i hosting packages.
 
-The current implementation supports authoritative read-only DNS export through `dump-records.php` and additive TXT record creation through `add-records.php`.
+The current implementation supports authoritative read-only DNS export through `dump-records.php`, additive TXT record creation through `add-records.php`, ref-based record deletion through `delete-records.php`, and atomic TXT replacement through `replace-records.php`.
 
 ## `dump-records.php`
 
@@ -260,7 +260,6 @@ A successful API submission that remains pending in authoritative DNS does not b
 ## Current Limitations
 
 - TXT is the only supported record type.
-- Records can be added but not deleted or replaced.
 - Wildcard owner names are rejected.
 - The local journal protects only clients that share the same journal file.
 - An operator using `--force`, another workstation, or the 20i control panel can still create duplicates during publication delay.
@@ -278,3 +277,124 @@ Before a production batch:
 6. immediately rerun without `--force` and confirm `RECENTLY SUBMITTED`;
 7. wait for authoritative publication before broader testing;
 8. use `--all` only after explicit-domain and small-batch tests succeed.
+
+## `delete-records.php`
+
+`delete-records.php` deletes DNS records matched by owner name, type, and (optionally) value from:
+
+- one positional domain;
+- a list of domains read from standard input; or
+- every domain attached to a package selected with `--all`.
+
+```bash
+php scripts/dns/delete-records.php example.com --name _acme-challenge --type TXT
+php scripts/dns/delete-records.php example.com --name @ --type TXT --value "old verification"
+php scripts/dns/delete-records.php --all package-example.com --name @ --type TXT \
+    --value "This domain is for sale"
+php scripts/dns/delete-records.php --name _old --type CNAME < domains.txt
+```
+
+### Record identity and matching
+
+Records are read from the 20i stored zone (`GET /package/{packageId}/dns`) and identified by their stable per-record `ref` (verified live: numeric, stable across calls, `null` only on SOA). The delete request is one atomic diff per domain:
+
+```json
+{"conflictPolicy":"reject","insertPolicy":"append",
+ "new":{"AAAA":[],"A":[],"CNAME":[],"MX":[],"TXT":[],"SRV":[]},
+ "delete":["<ref>", "..."]}
+```
+
+Matching rules:
+
+- The owner name uses the same forms as `add-records.php` (`@`, empty, relative, zone domain, in-zone FQDN; wildcards rejected).
+- Types compare case-insensitively. `--type` accepts `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `SRV`.
+- With `--value`, TXT values compare after normalization; other types compare case-insensitively after trimming (`MX` values look like `10 mail.example.com`, `SRV` like `5 0 5269 target.example.com`, matching `dump-records.php` output).
+- Without `--value`, **every** record of that owner and type is deleted.
+- Zero matching records is a per-domain error (exit `3`) unless `--skip` classifies it as a skip.
+
+### Guards
+
+- SOA records can never be deleted (`--type SOA` is refused, and a matched SOA is blocked again at mutation time).
+- NS deletion is refused entirely, so the zone apex always keeps its delegation.
+
+### Mandatory pre-change snapshots
+
+Before each domain's POST, the full stored zone is written as JSON Lines — shaped like `dump-records.php` rows, including raw record `fields` and refs — to:
+
+```text
+$XDG_STATE_HOME/20i-cli/snapshots/<domain>-<utcstamp>.jsonl
+```
+
+(falling back to `~/.local/state`, then `LOCALAPPDATA`/`APPDATA`, then the system temporary directory; directory `0700`, file `0600`). A snapshot failure aborts that domain's mutation.
+
+### Options
+
+| Option | Purpose |
+|---|---|
+| `--name <dns-name>` | Owner name of the records to delete. |
+| `--type <T>` | Record type: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `SRV`. |
+| `--value <string>` | Optional value filter; omitted deletes all records of that owner and type. |
+| `--all` | Delete matching records on every domain in the selected package. |
+| `--dry-run` | Full preflight with `WOULD DELETE` lines, zero mutation. |
+| `--yes`, `-y` | Suppress the confirmation prompt for ten or more eligible domains. |
+| `--skip` | Treat zero-match domains as skips instead of failures. |
+| `--force` | Ignore the local recent-deletion journal only. |
+| `--help`, `-h` | Display the command's built-in help. |
+
+Accepted deletions are journaled for 60 minutes (`20i-cli/dns-deletions.json` in the state directory) to prevent accidental duplicate resubmission during publication delay; `--force` bypasses only this journal. Post-change authoritative verification is advisory: `ACCEPTED; VERIFIED` or `ACCEPTED; PUBLICATION PENDING` — pending is a success, because StackDNS publication may take 30 minutes or longer.
+
+Exit codes follow the shared convention: `0` success (including skips and pending publication), `1` fatal before mutation, `2` operator declined the batch confirmation, `3` one or more domains failed.
+
+## `replace-records.php`
+
+`replace-records.php` atomically replaces one TXT record on one positional domain or a list of domains from standard input. Version 1 supports TXT only.
+
+```bash
+php scripts/dns/replace-records.php example.com --name @ --type TXT \
+    --old-value "old verification" --new-value "new verification"
+
+php scripts/dns/replace-records.php --name _acme --type TXT \
+    --old-value "token-1" --new-value "token-2" < domains.txt
+```
+
+### Exactly-one-match rule
+
+Exactly one stored TXT record must match the owner and `--old-value`:
+
+- zero matches fail that domain (`No record matches …`);
+- multiple matches fail that domain (`N records match …; refusing an ambiguous replace`);
+- identical `--old-value` and `--new-value` is a fatal usage error before any work begins.
+
+### Atomicity
+
+The replacement is a single DNS diff POST carrying both the new TXT record and the deletion of the matched ref, so the zone never holds zero or two copies between calls:
+
+```json
+{"conflictPolicy":"reject","insertPolicy":"append",
+ "new":{"AAAA":[],"A":[],"CNAME":[],"MX":[],"TXT":[{"host":"…","txt":"…"}],"SRV":[]},
+ "delete":["<matchedRef>"]}
+```
+
+### Options
+
+| Option | Purpose |
+|---|---|
+| `--name <dns-name>` | Owner name of the TXT record to replace. |
+| `--type TXT` | Record type; TXT is the only supported type in this version. |
+| `--old-value <string>` | The exact current value; must match exactly one record. |
+| `--new-value <string>` | The replacement value. |
+| `--dry-run` | Full preflight with `WOULD REPLACE` lines, zero mutation. |
+| `--yes`, `-y` | Suppress the confirmation prompt for ten or more eligible domains. |
+| `--force` | Ignore the local recent-replacement journal only. |
+| `--help`, `-h` | Display the command's built-in help. |
+
+Pre-change snapshots, the 60-minute journal (`20i-cli/dns-replacements.json`), advisory verification of the new value, and the shared exit codes all work exactly as described for `delete-records.php`.
+
+## Offline Tests
+
+```bash
+php tests/dns/dump-probes.php
+php tests/dns/mutation-probes.php
+```
+
+Both run without network access or an API key and exit non-zero on any assertion failure. `mutation-probes.php` covers the delete/replace payload builders, ref extraction (including the SOA `null` ref), record matching, the SOA and apex-NS guards, zero-/multi-match classification, the replace exactly-one-match rule, snapshot writing, and the mutation journal.
