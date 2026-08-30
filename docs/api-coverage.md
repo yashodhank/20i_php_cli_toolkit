@@ -1,0 +1,107 @@
+# 20i API Coverage & Roadmap
+
+Assessment of this toolkit against the official 20i reseller API
+(`docs/20i.apib`, ~323 unique documented path+verb endpoints).
+Updated: 2026-08-30.
+
+## Summary
+
+| Measure | Count | % of API |
+|---|---:|---:|
+| Endpoints used by production code | 7 | ~2% |
+| Endpoints verified reachable (incl. read-only audit probes) | ~24 | ~7% |
+| Endpoints in scope for the toolkit's mission (domains/DNS/email/reseller-ops) | ~120 | ~37% |
+
+Coverage is deliberately **deep, not wide**: the toolkit implements complete,
+guarded lifecycle loops (DNS read/add/replace/delete; names attach/detach/move;
+forward list/create/update/delete) rather than thin wrappers. The seven
+endpoints below carry all current workflows.
+
+## Implemented (production)
+
+| Endpoint | Verb | Used by |
+|---|---|---|
+| `/package` | GET | all commands (package/domain resolution) |
+| `/package/{id}/names` | GET, POST | attach / detach / move |
+| `/package/{id}/dns` | GET | dump, delete, replace, move-snapshot |
+| `/package/{id}/dns/{domain}` | POST | add / delete / replace records |
+| `/package/{id}/allMailForwarders` | GET | list / delete / update forwards |
+| `/package/{id}/email/{domain}` | POST | create / delete / update forwards |
+
+Verified behaviors worth knowing (hard-won, see `docs/contracts/`):
+
+- DNS record identity for delete/replace is the per-record `fields.ref`
+  (numeric, stable, absent on SOA).
+- Email forward delete payload is a FLAT id array `{"delete":["f<id>"]}`;
+  the intuitive nested shape is silently accepted **and ignored**.
+- Bare domain names work as the `{emailId}` path segment.
+- `POST /package/{id}/names` add is idempotent; removing the last name is
+  forbidden; removing the primary requires `chg`.
+
+## Partially covered areas
+
+| Area | Have | Missing |
+|---|---|---|
+| Email (17 endpoints) | forwards CRUD + list | mailboxes, autoresponders, DKIM/DMARC, spam lists, stats, webmail, domain aliases |
+| DNS (8) | zone read + record add/delete/replace | defaultDns, Google/Office365 presets, DNSSEC, nameserver management |
+| Package names (3) | full names add/remove/move | `web/names` doc-root variant, `domainCheck` |
+| Package core (12) | list | per-package detail, limits, stackUserList, welcome emails, activate/deactivate |
+
+## Future scope — tiered roadmap
+
+### Tier 1 — read-only commands (safe, immediate value)
+
+- **Domain registry reads**: `GET /domain` (registrations + expiry +
+  renewal intent), `/domain-search/{q}` (availability, ~470 TLDs),
+  `/domain-period`, `/domainPremiumType`, `…/servicePrice` (premium price,
+  GBP wholesale). Natural commands: `domain-search.php`,
+  `renewal-status.php` (expiry vs balance cross-check).
+- **Reseller reads**: `accountBalance`, `packageCount`, `packageTypes`,
+  `serviceChangeData`, `timelineStorage`, `virtualNameserver`.
+- **Email reads**: mailboxes, responders, DKIM/DMARC state, spam lists,
+  stats (completes an email audit story).
+- **Web/site reads**: bandwidth/disk/usage stats, SSL cert inventory,
+  timeline-backup listings, malware report, logs.
+
+### Tier 2 — guarded writes (same safety pattern as shipped commands)
+
+- **Domain service config**: nameserver changes, DNSSEC, WHOIS opt-out,
+  domain privacy, contacts (registrant data — validate carefully).
+- **Email writes**: DKIM signature, DMARC policy, autoresponders,
+  spam black/whitelists; mailbox create (password handling needs care).
+- **Web writes**: redirects, subdomains, force-SSL, free-SSL issue,
+  maintenance mode, scheduled tasks.
+- **Timeline backups**: take-snapshot (web/db/mailbox) — safe; restores
+  belong in Tier 3.
+
+### Tier 3 — destructive / billing (explicit confirm + balance preflight)
+
+- **Package lifecycle**: `addWeb`, `deleteWeb`, `updatePackage` /
+  `updateWebType`, `splitPackage`, bulk `hosting/*` operations.
+- **Domain commerce**: `addDomain`, `renewDomain`, `transferDomain` (+
+  EPP auth code, transfer lock, IPS tag on the per-domain side). All
+  draw down the prepaid account balance.
+- **Service orders/renewals**: VPS, managed VPS, cloud servers, MSSQL,
+  premium mailboxes, SSL certificates, Website Turbo (all billing).
+- **Timeline restores** (web/db/mailbox) — data-overwriting.
+- **VPS power/rebuild controls**, WordPress management suite (large:
+  plugins, themes, users, staging, checksum, search-replace).
+
+### Out of scope
+
+- StackCP SSO/webmail URLs and Stack user impersonation (require the
+  auth-client key, which this toolkit deliberately does not handle).
+- Easy Builder instances/themes/SSO.
+- Password-reset email endpoints (side-effectful; panel-appropriate).
+
+## API gaps to design around
+
+- **No standard TLD price-list endpoint** — standard pricing lives in the
+  panel's TLD pricing tables; only premium prices are queryable
+  (`servicePrice`, GBP, excl. reseller markup). Retail pricing must come
+  from the storefront layer, not this API.
+- `deleteWeb`/`updatePackage`/`splitPackage` document GET variants that
+  should be treated as apib doc artifacts, not safe reads.
+- The generic REST client swallows 404 into a PHP notice returning null —
+  every new read must treat `null` as "not found", never "empty success"
+  (see `assertApiResponse()` in `lib/email.php`).
