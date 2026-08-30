@@ -198,22 +198,16 @@ function buildCreateForwardPayload(string $local, string $remote): array
 /**
  * Build the payload that deletes email forwards by server-assigned ID.
  *
- * CONFIRM-LIVE (contract docs/contracts/lifecycle-expansion-contract.md
- * section 2.3): unlike the create payload, this delete shape is INFERRED
- * by analogy with the DNS diff payload and the create payload; it has NOT
- * been proven against the live API. This function is intentionally the
- * only place in the codebase where the shape lives, so a live
- * confirmation (or correction) during integration verification changes
- * exactly one line of production code.
- *
- * Primary candidate (implemented below):
- *   {"delete": {"forward": [id, ...]}}
- *
- * Alternatives to try, in order, if the primary candidate is rejected or
- * silently ignored when confirmed against an operator-named test domain:
- *   1. {"delete": {"forward": [{"id": id}, ...]}}
- *   2. HTTP DELETE /package/{packageId}/email/{domain} with the payload
- *      above (the vendored client exposes deleteWithFields()).
+ * LIVE-CONFIRMED 2026-08-30 (operator-authorized smoke, rays.im /
+ * package 906553): the shape is a FLAT delete array of server-assigned,
+ * type-prefixed IDs — the "f" prefix on forwarder IDs (versus "d" for the
+ * domain object) already encodes the object type, so no nesting under
+ * "forward" is used:
+ *   {"delete": ["f8282897", ...]}
+ * The API responds {"result":{"result":[],"name":"<domain>"}} and the
+ * forward disappears from allMailForwarders immediately. The nested
+ * variant {"delete":{"forward":[id,...]}} is silently ACCEPTED BUT
+ * IGNORED by the API — do not regress to it.
  *
  * Every delete and update path flows through deleteForward(), which uses
  * this builder; callers verify by re-listing after the call, so a
@@ -251,9 +245,7 @@ function buildDeleteForwardPayload(array $ids): array
     }
 
     return [
-        'delete' => [
-            'forward' => $cleanIds,
-        ],
+        'delete' => $cleanIds,
     ];
 }
 

@@ -186,15 +186,15 @@ checkSame(
     'create payload matches the proven live shape'
 );
 
-echo "# buildDeleteForwardPayload (CONFIRM-LIVE primary candidate)\n";
+echo "# buildDeleteForwardPayload (LIVE-CONFIRMED 2026-08-30, rays.im)\n";
 
 checkSame(
-    ['delete' => ['forward' => [42, '7']]],
+    ['delete' => [42, '7']],
     buildDeleteForwardPayload([42, '7']),
-    'delete payload is {"delete":{"forward":[id,...]}}'
+    'delete payload is the flat {"delete":[id,...]} shape proven live'
 );
 checkSame(
-    ['delete' => ['forward' => [3]]],
+    ['delete' => [3]],
     buildDeleteForwardPayload([2 => 3]),
     'delete payload reindexes IDs'
 );

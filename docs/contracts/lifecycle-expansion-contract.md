@@ -75,17 +75,19 @@ composed client-side.
 |---|---|---|
 | List all forwards | `GET /package/{packageId}/allMailForwarders` → `{domain:[{id,local,remote}]}` | VERIFIED LIVE (empty arrays; shape per apib 8309) |
 | Per-domain config | `GET /package/{packageId}/email/{domain}` | VERIFIED LIVE, bare-domain path accepted |
-| Mutate | `POST /package/{packageId}/email/{domain}` | create proven (`{"new":{"forward":{"local":…,"remote":…}}}`); **delete/update payload UNPROVEN** |
+| Mutate | `POST /package/{packageId}/email/{domain}` | create proven (`{"new":{"forward":{"local":…,"remote":…}}}`); delete **LIVE-CONFIRMED**: `{"delete":["f<id>",…]}` |
 
 Bare domain **VERIFIED** as the `{emailId}` segment for all email GETs
 (2026-08-30, package 786795). Forward identity = server-assigned `id` from
 `allMailForwarders`, disambiguated by `local`+`remote`.
 
-**CONFIRM-LIVE gate:** the delete payload is inferred by analogy
-(`{"delete":{"forward":[id…]}}` primary candidate). It MUST live in exactly
-one function (`buildDeleteForwardPayload()` in `lib/email.php`) with the
-candidate shapes documented inline. It will be confirmed against an
-operator-named test domain during integration verification before merge.
+**CONFIRM-LIVE gate: RESOLVED 2026-08-30** (operator-authorized smoke on
+rays.im/package 906553): the delete payload is a FLAT array of
+type-prefixed server IDs — `{"delete":["f8282897"]}` deleted the forward;
+response `{"result":{"result":[],"name":"rays.im"}}`. The originally
+inferred nested shape `{"delete":{"forward":[id…]}}` is silently accepted
+and IGNORED by the API. The shape lives only in
+`buildDeleteForwardPayload()` (`lib/email.php`).
 Mailboxes, catch-all and wildcard forwards are **out of scope v1**; commands
 must detect and refuse them loudly.
 
