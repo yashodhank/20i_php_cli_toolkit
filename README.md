@@ -166,6 +166,8 @@ For DNS-specific behavior, propagation considerations, and batch examples, see [
 - [`scripts/email/README.md`](scripts/email/README.md): email command guide
 - [`configs/README.md`](configs/README.md): configuration information
 - [`docs/cli-handbook.md`](docs/cli-handbook.md): operator, automation, and agent CLI handbook
+- [`docs/api-reference.md`](docs/api-reference.md): annotated reference for all 325 20i API endpoints (categories, safety classes, payloads, examples)
+- [`docs/api-coverage.md`](docs/api-coverage.md): toolkit coverage assessment and tiered roadmap
 - [`docs/setup.md`](docs/setup.md): setup guidance
 - [`tests/README.md`](tests/README.md): testing information
 
