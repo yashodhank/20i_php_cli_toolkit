@@ -110,16 +110,22 @@ The "Set/Update reseller settings" API endpoint allows you to update the setting
 
 To update the reseller settings, you need to provide the following parameters in the request payload:
 
-malwareEmails: A boolean value indicating whether the reseller has opted into receiving malware-related emails.
-malwareEmailsStackCpUsers: A boolean value indicating whether the associated StackCP users of the reseller have opted into receiving malware-related emails.
-migrationCompleteEmails: A boolean value indicating whether the reseller has opted into receiving emails notifying them about completed migrations.
-domainAutoRenewDefault: A boolean value indicating the default auto-renewal behavior for domains. If set to true, domains will be set to auto-renew; if set to false, domains will be set to cancel upon renewal.
 Upon successful execution of the API call, the response will return a boolean value indicating whether any of the settings were successfully saved. If at least one setting was modified and saved, the response will be true.
 
 It's important to note that these settings are specific to the reseller account and will affect the behavior of the associated reseller features and services.
 
 Please ensure that you review the API documentation for more detailed information on the parameters and their usage.
 
+
+- `malwareEmails`: A boolean value indicating whether the reseller has opted into receiving malware-related emails.
+- `malwareEmailsStackCpUsers`: A boolean value indicating whether the associated StackCP users of the reseller have opted into receiving malware-related emails.
+- `migrationCompleteEmails`: A boolean value indicating whether the reseller has opted into receiving emails notifying them about completed migrations.
+- `domainAutoRenewDefault`: A boolean value indicating the default auto-renewal behavior for domains. If set to true, domains will be set to auto-renew; if set to false, domains will be set to cancel upon renewal.
+
+- `malwareEmails`: A boolean value indicating whether the reseller has opted into receiving malware-related emails.
+- `malwareEmailsStackCpUsers`: A boolean value indicating whether the associated StackCP users of the reseller have opted into receiving malware-related emails.
+- `migrationCompleteEmails`: A boolean value indicating whether the reseller has opted into receiving emails notifying them about completed migrations.
+- `domainAutoRenewDefault`: A boolean value indicating the default auto-renewal behavior for domains. If set to true, domains will be set to auto-renew; if set to false, domains will be set to cancel upon renewal.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -178,23 +184,36 @@ This API call provides information about the existing service change requests an
 
 The response from this API call will be an array of objects, where each object represents a service change request. Each object contains the following information:
 
-id: The unique identifier of the service change request.
-name: The name associated with the service change request.
-jobId: The job ID associated with the service change request.
-status: The current status of the service change request.
-oldServiceLevel: The previous service level of the package.
-newServiceLevel: The new service level to which the package is being moved.
-packageId: The ID of the package undergoing the service level change.
-resellerId: (Optional) The ID of the reseller associated with the service change request.
-newPackageBundleTypeId: (Optional) The ID of the new package bundle type.
-createdAt: (Optional) The timestamp indicating when the service change request was created.
-updatedAt: (Optional) The timestamp indicating the last update time of the service change request.
 
 Please note that this API endpoint is designed to provide access to the known service change requests and their corresponding details within the 20i platform.
 It allows you to retrieve information about the service level changes that have been requested or are in progress.
 
 This API endpoint falls under the "Services" section and serves as a means to retrieve the known service change requests and their current status.
 
+
+- `id`: The unique identifier of the service change request.
+- `name`: The name associated with the service change request.
+- `jobId`: The job ID associated with the service change request.
+- `status`: The current status of the service change request.
+- `oldServiceLevel`: The previous service level of the package.
+- `newServiceLevel`: The new service level to which the package is being moved.
+- `packageId`: The ID of the package undergoing the service level change.
+- `resellerId`: (Optional) The ID of the reseller associated with the service change request.
+- `newPackageBundleTypeId`: (Optional) The ID of the new package bundle type.
+- `createdAt`: (Optional) The timestamp indicating when the service change request was created.
+- `updatedAt`: (Optional) The timestamp indicating the last update time of the service change request.
+
+- `id`: The unique identifier of the service change request.
+- `name`: The name associated with the service change request.
+- `jobId`: The job ID associated with the service change request.
+- `status`: The current status of the service change request.
+- `oldServiceLevel`: The previous service level of the package.
+- `newServiceLevel`: The new service level to which the package is being moved.
+- `packageId`: The ID of the package undergoing the service level change.
+- `resellerId`: (Optional) The ID of the reseller associated with the service change request.
+- `newPackageBundleTypeId`: (Optional) The ID of the new package bundle type.
+- `createdAt`: (Optional) The timestamp indicating when the service change request was created.
+- `updatedAt`: (Optional) The timestamp indicating the last update time of the service change request.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -476,6 +495,78 @@ Domain privacy can be added in the same request via `privacyService`.
 
             
                 true
+            
+
+
+## Order Mailbox Quota Add-on [/reseller/{resellerId}/addMailboxQuotaAddon]
+
+### Order Mailbox Quota Add-on [POST]
+
+Orders a mailbox quota add-on for an existing mailbox and charges your
+account balance. Each add-on increases that mailbox's quota by 10 GB and
+is bought on a fixed 12 month term. Call it more than once to add further
+10 GB blocks to the same mailbox.
+Returns the new add-on ID on success.
+
+> **Warning:** This charges your account balance immediately.
+> If you have insufficient funds the call will fail and no service will be created.
+
+```
+    <?php
+    $general_api_key = "API_KEY";
+    $services_api = new \TwentyI\API\Services($general_api_key);
+
+    $request = $services_api->postWithFields("/reseller/{resellerId}/addMailboxQuotaAddon", [
+            "mailbox" => "string",
+            "configuration" => [
+                "id" => "string",
+                "local" => "string",
+                "domain" => "string",
+                "forUser" => "string"
+            ],
+            "forUser" => "string"
+    ]);
+```
++ Parameters
+
+    + resellerId: 1 (number, required) - Your reseller ID.
+
+
++ Attributes
+
+    + `mailbox` (string,required) - The full address of the mailbox being topped up, e.g. `"info@example.com"`
+    + `configuration` (object,required) - 
+        - `id` (string,required) - The existing mailbox ID, e.g. `"m11111"`
+        - `local` (string,required) - The local part of the mailbox address (before the `@`)
+        - `domain` (string,required) - The domain part of the mailbox address (after the `@`)
+        - `forUser` (string,nullable) - Stack user tuple that owns the mailbox, e.g. `"stack-user:123"`
+    + `forUser` (string,nullable) - Stack user tuple to assign the add-on to, e.g. `"stack-user:123"`
+     
++ Request (application/json)
+
+    + Headers
+
+            Authorization: Bearer token
+
+    + Body
+
+            {
+                    mailbox: "string",
+                    configuration:{
+                        id: "string",
+                        local: "string",
+                        domain: "string",
+                        forUser: "string"
+                    },
+                    forUser: "string"
+            }
+
++ Response 200 (application/json)
+
+    + Body
+
+            
+                string
             
 
 
@@ -810,6 +901,91 @@ If `cpanel` is provided, a cPanel licence is ordered and attached automatically.
             
 
 
+## Order VPS Add-on [/reseller/{resellerId}/addVpsAddon]
+
+### Order a VPS Add-on [POST]
+
+Orders an add-on for an existing VPS or Managed VPS and charges your
+account balance. The add-on is attached to the server given by
+`configuration.vpsRef` and gets its own contract, so it renews
+separately from the server itself.
+Returns the new add-on ID on success.
+
+> **Warning:** This charges your account balance immediately.
+> If you have insufficient funds the call will fail and no service will be created.
+
+> **Note:** `periodMonths` must match a billing period the product is
+> sold on. Backups are sold monthly, IP addresses yearly, and disk and
+> cPanel add-ons are sold either way.
+
+```
+    <?php
+    $general_api_key = "API_KEY";
+    $services_api = new \TwentyI\API\Services($general_api_key);
+
+    $request = $services_api->postWithFields("/reseller/{resellerId}/addVpsAddon", [
+            "configuration" => [
+                "vpsRef" => "string"
+            ],
+            "forUser" => "string",
+            "options" => [
+                "vpsType" => "string"
+            ],
+            "periodMonths" => 1,
+            "productSpec" => "string",
+            "serviceType" => "string"
+    ]);
+```
++ Parameters
+
+    + resellerId: 1 (number, required) - Your reseller ID.
+
+
++ Attributes
+
+    + `configuration` (object,required) - 
+        - `vpsRef` (string,required) - The ID of the VPS or Managed VPS to attach the add-on to, e.g. `"1234"`
+    + `forUser` (string,nullable) - Stack user tuple to assign the add-on to, e.g. `"stack-user:588"`
+    + `options` (object,nullable) - Only used by `vps_addon-backup`, where it is required.
+        - `vpsType` (string,required) - The product type of the VPS being backed up, without the `vps-` prefix, e.g. `"e"` for a `vps-e`
+    + `periodMonths` (number,required) - Contract duration in months
+    + `productSpec` (string,required) - The add-on product specification code. One of:
+             +  `vps_addon-backup` â€” timeline backups for the VPS
+             +  `vps_addon-ip_address` â€” an additional IP address
+             +  `vps_addon-disk{size}GB` â€” an additional disk, where `size` is 50-250 in steps of 10, 250-1000 in steps of 50, or 1000-2000 in steps of 100, e.g. `vps_addon-disk500GB`
+             +  `vps_addon-cpanel7`, `vps_addon-cpaneladmin`, `vps_addon-cpanelplus`, `vps_addon-cpanelpro`, `vps_addon-cpanelpremier` or `vps_addon-cpanelpremiercloud` â€” a cPanel licence
+    + `serviceType` (string,required) - Always `"vps_addon"`. Other service types will not return an ID.
+     
++ Request (application/json)
+
+    + Headers
+
+            Authorization: Bearer token
+
+    + Body
+
+            {
+                    configuration:{
+                        vpsRef: "string"
+                    },
+                    forUser: "string",
+                    options:{
+                        vpsType: "string"
+                    },
+                    periodMonths: 1,
+                    productSpec: "string",
+                    serviceType: "string"
+            }
+
++ Response 200 (application/json)
+
+    + Body
+
+            
+                string
+            
+
+
 ## Order Website Turbo Credits [/reseller/{resellerId}/addWebsiteTurboCredits]
 
 ### Order Credits [POST]
@@ -871,8 +1047,6 @@ The "Renew a Domain Name" API endpoint allows you to renew a domain name. This o
 To use this API, you need to provide the following parameters:
 
 $in: An array containing the following information:
-name: The domain name that you want to renew.
-years: The number of years for which you want to renew the domain.
 renewPrivacy (optional): A boolean value indicating whether to renew the associated privacy for the domain. By default, this parameter is set to false.
 
 The API call will return a boolean value indicating the success or failure of the domain renewal operation. A value of true indicates that the domain was renewed successfully, while false indicates a failure.
@@ -881,6 +1055,12 @@ It's important to note that this API endpoint charges the registration fee for t
 
 This API endpoint is useful when you want to automate the domain renewal process and ensure that your domains are renewed for the desired number of years.
 
+
+- `name`: The domain name that you want to renew.
+- `years`: The number of years for which you want to renew the domain.
+
+- `name`: The domain name that you want to renew.
+- `years`: The number of years for which you want to renew the domain.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -985,11 +1165,14 @@ The "Renew MSSQL Databases" API endpoint allows you to renew an MSSQL database b
 
 To renew an MSSQL database, you need to provide the following parameter in the request payload:
 
-id: The ID of the MSSQL database that you want to renew.
 Upon successful execution of the API call, the response will return a boolean value indicating the success of the renewal operation. The value true indicates that the MSSQL database was successfully renewed.
 
 Please note that this API endpoint is designed for renewing MSSQL databases with 20i. It handles the renewal process by charging the appropriate fees and verifying the availability of funds in your 20i account.
 
+
+- `id`: The ID of the MSSQL database that you want to renew.
+
+- `id`: The ID of the MSSQL database that you want to renew.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -1088,13 +1271,17 @@ The "Renew an SSL Certificate" API endpoint allows you to renew an SSL certifica
 
 To renew an SSL certificate, you need to provide the following parameters in the request payload:
 
-id: The ID of the SSL certificate that you want to renew.
-periodMonths: The number of months for which you want to renew the SSL certificate.
 Upon successful execution of the API call, the response will return a boolean value indicating the success of the renewal operation. The value true indicates that the SSL certificate was successfully renewed.
 
 Please note that this API endpoint handles the renewal process by charging the appropriate fee to your 20i Balance.
 It checks if you have sufficient funds in your account, and if not, the renewal process will fail. Therefore, it is important to ensure that you have enough balance in your 20i account before making the API call to renew an SSL certificate.
 
+
+- `id`: The ID of the SSL certificate that you want to renew.
+- `periodMonths`: The number of months for which you want to renew the SSL certificate.
+
+- `id`: The ID of the SSL certificate that you want to renew.
+- `periodMonths`: The number of months for which you want to renew the SSL certificate.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -1146,8 +1333,6 @@ The "Renew an SSL Certificate" API endpoint allows you to renew an SSL certifica
 To use this API, you need to provide the following parameters:
 
 $in: An array containing the following information:
-id: The ID of the SSL certificate that you want to renew.
-periodMonths: The number of months for which you want to renew the SSL certificate.
 
 The API call will return a float value or null. The float value represents the new expiration date of the SSL certificate in Unix timestamp format. If the renewal is unsuccessful or there is an error, the API will return null.
 
@@ -1156,6 +1341,12 @@ If you don't have sufficient funds in your balance, the renewal will fail. There
 
 This API endpoint is useful when you want to automate the renewal process for SSL certificates and ensure that they remain valid and secure for an extended period.
 
+
+- `id`: The ID of the SSL certificate that you want to renew.
+- `periodMonths`: The number of months for which you want to renew the SSL certificate.
+
+- `id`: The ID of the SSL certificate that you want to renew.
+- `periodMonths`: The number of months for which you want to renew the SSL certificate.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -1898,7 +2089,6 @@ When removing such a name, an empty web forwarding config is created automatical
     + Body
 
             
-                ["string"]
             
 
 
@@ -2141,6 +2331,7 @@ Returns the current configuration and status of the domain privacy service.
                 {
                     id: "string",
                     isEnabled: true,
+                    canEnable: true,
                     type: "string",
                     emailDestination: "string",
                     prefix: "string"
@@ -2572,7 +2763,8 @@ values overridden by the autoscale allowance.
                         ftp: true,
                         temporaryURL: true,
                         mssqlDatabases: 1,
-                        timelineBackups: true
+                        timelineBackups: true,
+                        timelineBackupsPro: true
                     }
                 }
             
@@ -3168,16 +3360,23 @@ When making the API call, you need to provide the following parameter:
 $in: An array containing the package ID. The package ID is specified as the "packageid" parameter.
 The response from this API call will be an array containing the following information:
 
-defaultPages: An array representing the default pages associated with the package branding. It includes the following keys:
-IndexPageHtml: The HTML content of the index page.
-DeactivatedPageHtml: The HTML content of the deactivated page.
-ServiceUnavailablePageHtml: The HTML content of the service unavailable page.
-MaintenanceLoginPageHtml: The HTML content of the maintenance login page.
 The package branding configuration allows you to customize the appearance and content of various pages related to the package, such as the index page, deactivated page, service unavailable page, and maintenance login page.
 By retrieving this configuration, you can access the default HTML content for these pages and modify them according to your needs.
 
 Please note that the provided package ID is used to identify the specific package for which you want to fetch the branding details.
 
+
+- `defaultPages`: An array representing the default pages associated with the package branding. It includes the following keys:
+- `IndexPageHtml`: The HTML content of the index page.
+- `DeactivatedPageHtml`: The HTML content of the deactivated page.
+- `ServiceUnavailablePageHtml`: The HTML content of the service unavailable page.
+- `MaintenanceLoginPageHtml`: The HTML content of the maintenance login page.
+
+- `defaultPages`: An array representing the default pages associated with the package branding. It includes the following keys:
+- `IndexPageHtml`: The HTML content of the index page.
+- `DeactivatedPageHtml`: The HTML content of the deactivated page.
+- `ServiceUnavailablePageHtml`: The HTML content of the service unavailable page.
+- `MaintenanceLoginPageHtml`: The HTML content of the maintenance login page.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -3233,15 +3432,20 @@ The supported package types are "linux", "windows", and "wordpress". This API ca
 
 The response from this API call will be an array containing the following counts:
 
-linux: Represents the count of Linux web(s) or packages.
-windows: Represents the count of Windows web(s) or packages.
-wordpress: Represents the count of WordPress web(s) or packages.
 
 Please note that this API endpoint is designed to provide an overview of the package distribution based on different types within the 20i platform.
 It allows you to retrieve the total counts of packages associated with each type, such as Linux, Windows, and WordPress.
 
 This API endpoint falls under the "Package Count" section and serves as a means to obtain the package totals categorized by their respective types.
 
+
+- `linux`: Represents the count of Linux web(s) or packages.
+- `windows`: Represents the count of Windows web(s) or packages.
+- `wordpress`: Represents the count of WordPress web(s) or packages.
+
+- `linux`: Represents the count of Linux web(s) or packages.
+- `windows`: Represents the count of Windows web(s) or packages.
+- `wordpress`: Represents the count of WordPress web(s) or packages.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -3586,14 +3790,6 @@ The "Update Package Types" API endpoint allows you to update package types withi
 To update package types, you need to provide the following parameters in the request payload:
 
 delete-id: A set of IDs of items to delete.
-extraData: A map of type ID to extra data settings. Currently, the only supported setting is "temporaryUrlDomain," which specifies the domain to use as the temporary URL.
-id: A set of IDs to update.
-installApps: A map of type ID to an array of app codes. These app codes represent the apps that will be automatically installed for the specified package types.
-labels: An array that specifies the new labels for each package type.
-limit: An array that defines the new limit values for various limits associated with each package type. The limit codes and their corresponding subcodes are used to set the limit values.
-platform: Specifies the platform for the package types. This parameter is optional.
-syncLimits: A map of type ID to true, indicating which package types should have their limits synchronized.
-welcomeEmail: A map of type ID to welcome email settings, including the subject, from email address, and the full text/HTML content of the welcome email.
 Upon successful execution of the API call, the response will return an array with the updated information for the package types.
 
 Please note that this API endpoint is designed to handle the modification of package types within the 20i platform.
@@ -3601,6 +3797,26 @@ It provides flexibility in updating various settings and configurations associat
 
 This API endpoint falls under the "Package Types" section and allows you to manage and update the characteristics and configurations of different package types within your 20i account.
 
+
+
+
+- `extraData`: A map of type ID to extra data settings. Currently, the only supported setting is "temporaryUrlDomain," which specifies the domain to use as the temporary URL.
+- `id`: A set of IDs to update.
+- `installApps`: A map of type ID to an array of app codes. These app codes represent the apps that will be automatically installed for the specified package types.
+- `labels`: An array that specifies the new labels for each package type.
+- `limit`: An array that defines the new limit values for various limits associated with each package type. The limit codes and their corresponding subcodes are used to set the limit values.
+- `platform`: Specifies the platform for the package types. This parameter is optional.
+- `syncLimits`: A map of type ID to true, indicating which package types should have their limits synchronized.
+- `welcomeEmail`: A map of type ID to welcome email settings, including the subject, from email address, and the full text/HTML content of the welcome email.
+
+- `extraData`: A map of type ID to extra data settings. Currently, the only supported setting is "temporaryUrlDomain," which specifies the domain to use as the temporary URL.
+- `id`: A set of IDs to update.
+- `installApps`: A map of type ID to an array of app codes. These app codes represent the apps that will be automatically installed for the specified package types.
+- `labels`: An array that specifies the new labels for each package type.
+- `limit`: An array that defines the new limit values for various limits associated with each package type. The limit codes and their corresponding subcodes are used to set the limit values.
+- `platform`: Specifies the platform for the package types. This parameter is optional.
+- `syncLimits`: A map of type ID to true, indicating which package types should have their limits synchronized.
+- `welcomeEmail`: A map of type ID to welcome email settings, including the subject, from email address, and the full text/HTML content of the welcome email.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -3725,13 +3941,8 @@ The "Update/Delete a Package" API endpoint allows you to update or delete packag
 
 To update or delete a package, you need to provide the following parameters in the request payload:
 
-billing: An array that contains information about the customer's renewal date, renewal interval, preferred user, and other relevant details.
 delete-id: An array of package IDs to be deleted.
-id: An array of currently known package IDs.
-labels: An array that specifies the new label for each package.
-limit: An array that defines the new values for various limits associated with each package.
 limit-set: An array that determines whether specific limits should be changed or removed.
-packageBundleTypes: An array that specifies the new bundle type for each package.
 
 Upon successful execution of the API call, the response will return an array with the IDs of the services that were updated or deleted.
 
@@ -3740,6 +3951,19 @@ It requires the appropriate package IDs and parameters to perform the desired ac
 
 This API endpoint falls under the "Package Update" section and provides a flexible way to manage and modify packages associated with your 20i account.
 
+
+
+- `billing`: An array that contains information about the customer's renewal date, renewal interval, preferred user, and other relevant details.
+- `id`: An array of currently known package IDs.
+- `labels`: An array that specifies the new label for each package.
+- `limit`: An array that defines the new values for various limits associated with each package.
+- `packageBundleTypes`: An array that specifies the new bundle type for each package.
+
+- `billing`: An array that contains information about the customer's renewal date, renewal interval, preferred user, and other relevant details.
+- `id`: An array of currently known package IDs.
+- `labels`: An array that specifies the new label for each package.
+- `limit`: An array that defines the new values for various limits associated with each package.
+- `packageBundleTypes`: An array that specifies the new bundle type for each package.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -4450,17 +4674,24 @@ This can be useful when you want to manage domains individually or allocate sepa
 
 To split additional domains from a package, you need to provide the following parameters in the request payload:
 
-packageId: The ID of the package from which the domains will be split.
 
-domains: An array containing the details of the domains to be split. Each domain should have the following information:
 
-fqdn: The fully qualified domain name (FQDN) of the domain.
-databases: An optional array that can be used to specify any additional databases related to the split domains. The structure and details of this parameter are not provided in the given documentation.
 
 Upon successful execution of the API call, the response will return an array or null value:
 
-array: An array containing any relevant information or data related to the split operation.
 
+
+- `packageId`: The ID of the package from which the domains will be split.
+- `domains`: An array containing the details of the domains to be split. Each domain should have the following information:
+- `fqdn`: The fully qualified domain name (FQDN) of the domain.
+- `databases`: An optional array that can be used to specify any additional databases related to the split domains. The structure and details of this parameter are not provided in the given documentation.
+- `array`: An array containing any relevant information or data related to the split operation.
+
+- `packageId`: The ID of the package from which the domains will be split.
+- `domains`: An array containing the details of the domains to be split. Each domain should have the following information:
+- `fqdn`: The fully qualified domain name (FQDN) of the domain.
+- `databases`: An optional array that can be used to specify any additional databases related to the split domains. The structure and details of this parameter are not provided in the given documentation.
+- `array`: An array containing any relevant information or data related to the split operation.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -5354,11 +5585,14 @@ The "Set a password reset email" API endpoint allows you to set the template for
 Here are the details of the API endpoint:
 
 $in: An array containing the following parameter:
-content: The entire content of the password reset email template.
 The API call requires an instance of the \Services\Model class as a parameter.
 
-The API will return a boolean value, indicating whether the operation was successful. If the password reset email template is set successfully, the API will return true. Otherwise, it will return false.
+On success the API returns the number of affected database rows (an integer, normally 1). Failures are raised as exceptions rather than returning a value.
 
+
+- `content`: The entire content of the password reset email template.
+
+- `content`: The entire content of the password reset email template.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -5394,7 +5628,7 @@ The API will return a boolean value, indicating whether the operation was succes
     + Body
 
             
-                true
+                1
             
 
 
@@ -5489,15 +5723,19 @@ The API endpoint is designed to work in conjunction with the password reset func
 To use this API, you need to provide the following parameters:
 
 $in: An array containing the following information:
-token: The password reset token.
 username (optional): The username associated with the account. This parameter is not required but can be provided for additional identification purposes.
-url: The URL of the password reset page where the user will be redirected to. This URL should be in the format of "http://example.org/resetPassword" or a similar format.
 
 The API call will return a boolean value indicating the success or failure of the password reset email sending operation. A value of true indicates that the email was sent successfully, while false indicates a failure.
 
 This API endpoint is useful when you want to trigger a password reset email to a user who has requested to reset their password.
 By providing the token, username (optional), and the URL of the password reset page, the API will send an email to the user with instructions on how to proceed with the password reset process.
 
+
+- `token`: The password reset token.
+- `url`: The URL of the password reset page where the user will be redirected to. This URL should be in the format of "http://example.org/resetPassword" or a similar format.
+
+- `token`: The password reset token.
+- `url`: The URL of the password reset page where the user will be redirected to. This URL should be in the format of "http://example.org/resetPassword" or a similar format.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -5891,17 +6129,22 @@ topLevel (optional): If set to true, only top-level services will be returned.
 
 The response from this API call will be an array containing the following information:
 
-contact: An array representing the contact details associated with your Stack user. The array contains objects with user references as keys.
 Each object includes information such as person name, company name, address, city, postal code, country code, voice (phone number), notes, billing reference, email, company number,
 trading name, country alpha3 code, country alpha2 code, extended billing reference, and Nominet contact type.
-ftpLock: An array representing FTP lock configurations. The array contains objects with user references as keys.
 grant_map: An array representing the grant map of services. The array contains objects with user references as keys.
 service_by_tuple: An array representing the service by tuple configuration. The array contains objects with service references as keys.
-users: An array representing the users associated with your Stack account. The array contains objects with user references as keys.
 
 Please note that this API endpoint is specifically related to StackCP users and is designed to provide access to your Stack user configuration within the 20i platform.
 It allows you to retrieve and manage your user-related settings, contact details, FTP lock configurations, service grants, and more.
 
+
+- `contact`: An array representing the contact details associated with your Stack user. The array contains objects with user references as keys.
+- `ftpLock`: An array representing FTP lock configurations. The array contains objects with user references as keys.
+- `users`: An array representing the users associated with your Stack account. The array contains objects with user references as keys.
+
+- `contact`: An array representing the contact details associated with your Stack user. The array contains objects with user references as keys.
+- `ftpLock`: An array representing FTP lock configurations. The array contains objects with user references as keys.
+- `users`: An array representing the users associated with your Stack account. The array contains objects with user references as keys.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -6274,16 +6517,15 @@ The "Transfer a Domain Name" API endpoint allows you to transfer a domain name t
 
 To transfer a domain name, you need to provide the following parameters in the request payload:
 
-name: The domain name that you want to transfer.
-years: The number of years for which you want to transfer the domain. In most cases, this should be unset or set to 0 for UK transfers.
-contact: An array containing contact information for the domain. This includes the organization, name, address, telephone, email, and other details required for domain contact updates.
-emulateYears: If set to true, supplying years greater than 0 for registries that do not support years on transfer (e.g., .uk) will be treated as a transfer and renew operation.
-otherContacts: An optional array of additional contacts associated with the domain transfer. These contacts may be ignored for some transfers.
-authcode: The current EPP authcode required for CentralNIC transfers.
-limits: A limit code to value map that specifies domain limits for the transfer.
-nameservers: An array of nameserver hostnames for the domain. If not provided, default nameservers will be used. This parameter is ignored for UK transfers.
-privacyService: If set to true, domain privacy service will be added to the transfer order. Please note that this may not be applicable to some TLDs.
-stackUser: An optional parameter to grant access to a specific stack user.
+
+
+
+
+
+
+
+
+
 
 Upon successful execution of the API call, the response will return a boolean value indicating whether the transfer purchase was accepted.
 It's important to note that a successful response does not guarantee the success of the actual domain transfer process.
@@ -6293,6 +6535,30 @@ Please note that you can also use the contract#add method instead of this method
 If there are insufficient funds in your 20i account balance to cover the transfer fee, the transfer will fail.
 The appropriate transfer fee and any additional charges for services like privacy will be deducted from your 20i account balance.
 
+
+
+
+- `name`: The domain name that you want to transfer.
+- `years`: The number of years for which you want to transfer the domain. In most cases, this should be unset or set to 0 for UK transfers.
+- `contact`: An array containing contact information for the domain. This includes the organization, name, address, telephone, email, and other details required for domain contact updates.
+- `emulateYears`: If set to true, supplying years greater than 0 for registries that do not support years on transfer (e.g., .uk) will be treated as a transfer and renew operation.
+- `otherContacts`: An optional array of additional contacts associated with the domain transfer. These contacts may be ignored for some transfers.
+- `authcode`: The current EPP authcode required for CentralNIC transfers.
+- `limits`: A limit code to value map that specifies domain limits for the transfer.
+- `nameservers`: An array of nameserver hostnames for the domain. If not provided, default nameservers will be used. This parameter is ignored for UK transfers.
+- `privacyService`: If set to true, domain privacy service will be added to the transfer order. Please note that this may not be applicable to some TLDs.
+- `stackUser`: An optional parameter to grant access to a specific stack user.
+
+- `name`: The domain name that you want to transfer.
+- `years`: The number of years for which you want to transfer the domain. In most cases, this should be unset or set to 0 for UK transfers.
+- `contact`: An array containing contact information for the domain. This includes the organization, name, address, telephone, email, and other details required for domain contact updates.
+- `emulateYears`: If set to true, supplying years greater than 0 for registries that do not support years on transfer (e.g., .uk) will be treated as a transfer and renew operation.
+- `otherContacts`: An optional array of additional contacts associated with the domain transfer. These contacts may be ignored for some transfers.
+- `authcode`: The current EPP authcode required for CentralNIC transfers.
+- `limits`: A limit code to value map that specifies domain limits for the transfer.
+- `nameservers`: An array of nameserver hostnames for the domain. If not provided, default nameservers will be used. This parameter is ignored for UK transfers.
+- `privacyService`: If set to true, domain privacy service will be added to the transfer order. Please note that this may not be applicable to some TLDs.
+- `stackUser`: An optional parameter to grant access to a specific stack user.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -6707,22 +6973,22 @@ by the `purpose` context â€” e.g. `"privacy"` includes `hasPrivacy`,
 
 ### Fetch your nominet brand [GET]
 
-The "Fetch your nominet brand" API endpoint allows you to retrieve your current Nominet brand settings.
-This API call is used to obtain information about your Nominet brand, including the presence of a Nominet reseller, email address, trading name, URL, and phone number associated with your brand.
+Returns your current Nominet brand settings, including reseller status,
+contact details, and the information shown on UK domain WHOIS records.
 
-The response from this API call will be an array containing the following brand settings:
 
-nominetReseller: Indicates whether a Nominet reseller exists for your brand. This field can be null if there is no Nominet reseller.
-ukResellerEmail: Represents the email address associated with your brand, which is typically used as the support email address. This field can be null if no email address is provided.
-ukResellerTradingName: Specifies the trading name associated with your brand, which is typically the business name. This field can be null if no trading name is specified.
-ukResellerUrl: Provides the URL associated with your brand, typically used as the support URL. This field can be null if no URL is provided.
-ukResellerVoice: Represents the phone number to display on your customers' UK domain WHOIS information.
 
-Please note that this API endpoint is designed to provide access to your Nominet brand settings within the 20i platform.
-It allows you to retrieve important information related to your brand, such as reseller status, contact details, and website information.
+- `nominetReseller`: Whether a Nominet reseller exists for your brand (`null` if not set).
+- `ukResellerEmail`: The support email address associated with your brand (`null` if not set).
+- `ukResellerTradingName`: The trading/business name associated with your brand (`null` if not set).
+- `ukResellerUrl`: The support URL associated with your brand (`null` if not set).
+- `ukResellerVoice`: The phone number displayed on your customers' UK domain WHOIS records.
 
-This API endpoint falls under the "Nominet Brand" section and serves as a means to fetch and retrieve your current Nominet brand settings.
-
+- `nominetReseller`: Whether a Nominet reseller exists for your brand (`null` if not set).
+- `ukResellerEmail`: The support email address associated with your brand (`null` if not set).
+- `ukResellerTradingName`: The trading/business name associated with your brand (`null` if not set).
+- `ukResellerUrl`: The support URL associated with your brand (`null` if not set).
+- `ukResellerVoice`: The phone number displayed on your customers' UK domain WHOIS records.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -6762,23 +7028,21 @@ This API endpoint falls under the "Nominet Brand" section and serves as a means 
 
 ### Set/Update your nominet brand [POST]
 
-The "Set/Update your nominet brand" API endpoint allows you to configure and update your Nominet reseller settings.
-You can set or update various parameters related to your Nominet brand, such as the reseller email, trading name, URL, and phone number.
+Creates, updates, or deletes your Nominet reseller brand settings.
 
-Here are the details of the API endpoint:
 
-$in: An array containing the following parameters:
-nominetReseller: A string value indicating the action to be performed. Use "c" to set up a Nominet reseller, "u" to update it, or "d" to delete it.
-ukResellerEmail: The email address associated with your Nominet reseller.
-ukResellerTradingName: The trading name of your Nominet reseller.
-ukResellerUrl: The URL of your Nominet reseller.
-ukResellerVoice: The phone number to be displayed on your customers' UK domain WHOIS information.
-The API call may throw an exception of type \ServiceServer\Exception\Associated in case of any associated errors.
 
-The API will return a boolean value, indicating whether the operation was successful. If the Nominet brand settings are set or updated successfully, the API will return true. Otherwise, it will return false.
+- `nominetReseller`: The action to perform â€” `"c"` to create a Nominet reseller, `"u"` to update it, `"d"` to delete it.
+- `ukResellerEmail`: The support email address for your Nominet reseller.
+- `ukResellerTradingName`: The trading name of your Nominet reseller.
+- `ukResellerUrl`: The support URL for your Nominet reseller.
+- `ukResellerVoice`: The phone number to display on your customers' UK domain WHOIS records.
 
-Please note that this API endpoint may take some time to execute.
-
+- `nominetReseller`: The action to perform â€” `"c"` to create a Nominet reseller, `"u"` to update it, `"d"` to delete it.
+- `ukResellerEmail`: The support email address for your Nominet reseller.
+- `ukResellerTradingName`: The trading name of your Nominet reseller.
+- `ukResellerUrl`: The support URL for your Nominet reseller.
+- `ukResellerVoice`: The phone number to display on your customers' UK domain WHOIS records.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -7794,7 +8058,7 @@ and the nameservers are registered with the relevant registries.
 
 
 
-## Autoresponders [/package/{packageId}/email/{emailId}/responder]
+## Autoresponders [/package/{packageId}/email/{domain}/responder]
 
 ### Retrieve Autoresponder Configuration [GET]
 
@@ -7805,12 +8069,12 @@ Returns the current autoresponder configuration for all mailboxes on the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/responder");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/responder");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -7834,7 +8098,7 @@ Returns the current autoresponder configuration for all mailboxes on the domain.
             
 
 
-## DKIM [/package/{packageId}/email/{emailId}/signature]
+## DKIM [/package/{packageId}/email/{domain}/signature]
 
 ### Retrieve DKIM Signature [GET]
 
@@ -7846,12 +8110,12 @@ public/private key material and the DNS record values needed for publishing.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/signature");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/signature");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -7899,7 +8163,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->postWithFields("/package/{packageId}/email/{emailId}/signature", [
+    $request = $services_api->postWithFields("/package/{packageId}/email/{domain}/signature", [
             "action" => "string",
             "body" => [
                 {
@@ -7919,7 +8183,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 + Attributes
@@ -7967,7 +8231,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
             
 
 
-## DMARC [/package/{packageId}/email/{emailId}/dmarc]
+## DMARC [/package/{packageId}/email/{domain}/dmarc]
 
 ### Retrieve DMARC [GET]
 
@@ -7979,12 +8243,12 @@ DNS record values needed for publishing.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/dmarc");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/dmarc");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8034,7 +8298,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->postWithFields("/package/{packageId}/email/{emailId}/dmarc", [
+    $request = $services_api->postWithFields("/package/{packageId}/email/{domain}/dmarc", [
             "action" => "string",
             "body" => [
                 {
@@ -8056,7 +8320,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 + Attributes
@@ -8106,7 +8370,7 @@ The `action` field selects the operation: `create`, `update`, `delete`, or `rege
             
 
 
-## Email Blacklist [/package/{packageId}/email/{emailId}/spamPolicyListBlacklist]
+## Email Blacklist [/package/{packageId}/email/{domain}/spamPolicyListBlacklist]
 
 ### Retrieve Blacklist Configuration [GET]
 
@@ -8117,12 +8381,12 @@ Returns the current spam policy blacklist (blocked senders) for the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/spamPolicyListBlacklist");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/spamPolicyListBlacklist");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8146,7 +8410,7 @@ Returns the current spam policy blacklist (blocked senders) for the domain.
             
 
 
-## Email Domain [/package/{packageId}/email/{emailId}/domain]
+## Email Domain [/package/{packageId}/email/{domain}/domain]
 
 ### Get domain config [GET]
 
@@ -8157,12 +8421,12 @@ Returns the spam/reject scoring thresholds and identifier for the email domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/domain");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/domain");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8191,7 +8455,7 @@ Returns the spam/reject scoring thresholds and identifier for the email domain.
             
 
 
-## Email Domain Alias [/package/{packageId}/email/{emailId}/domainAlias]
+## Email Domain Alias [/package/{packageId}/email/{domain}/domainAlias]
 
 ### Get domain alias config [GET]
 
@@ -8202,12 +8466,12 @@ Returns the current domain alias configuration for the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/domainAlias");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/domainAlias");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8231,7 +8495,7 @@ Returns the current domain alias configuration for the domain.
             
 
 
-## Email Forwarder Config [/package/{packageId}/email/{emailId}/forwarder]
+## Email Forwarder Config [/package/{packageId}/email/{domain}/forwarder]
 
 ### Get email forwarder config [GET]
 
@@ -8243,12 +8507,12 @@ catch-all forwarders, and wildcard forwarders for the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/forwarder");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/forwarder");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8317,7 +8581,7 @@ Returns all email forwarders for this package, grouped by domain name.
             
 
 
-## Email Stats [/package/{packageId}/email/{emailId}/stats]
+## Email Stats [/package/{packageId}/email/{domain}/stats]
 
 ### Retrieve mailbox stats [GET]
 
@@ -8328,12 +8592,12 @@ Returns per-folder message counts and storage usage for a single mailbox.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/stats");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/stats");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8361,7 +8625,7 @@ Returns per-folder message counts and storage usage for a single mailbox.
             ]
 
 
-## Email Whitelist [/package/{packageId}/email/{emailId}/spamPolicyListWhitelist]
+## Email Whitelist [/package/{packageId}/email/{domain}/spamPolicyListWhitelist]
 
 ### Retrieve Whitelist Configuration [GET]
 
@@ -8372,12 +8636,12 @@ Returns the current spam policy whitelist (trusted senders) for the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/spamPolicyListWhitelist");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/spamPolicyListWhitelist");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8401,7 +8665,7 @@ Returns the current spam policy whitelist (trusted senders) for the domain.
             
 
 
-## Forwarders [/package/{packageId}/email/{emailId}/mailForwarders]
+## Forwarders [/package/{packageId}/email/{domain}/mailForwarders]
 
 ### Retrieve Mailbox Forwarder Configuration [GET]
 
@@ -8413,12 +8677,12 @@ configuration for the domain.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/mailForwarders");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/mailForwarders");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8571,7 +8835,7 @@ the target mailbox's quota by 10 GB (`MAILBOX_MULTIPLE = 10240 MB`).
             
 
 
-## Mailboxes [/package/{packageId}/email/{emailId}/mailbox]
+## Mailboxes [/package/{packageId}/email/{domain}/mailbox]
 
 ### Retrieve Current Mailbox Configuration [GET]
 
@@ -8583,12 +8847,12 @@ per-mailbox spam settings.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}/mailbox");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}/mailbox");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8629,7 +8893,7 @@ per-mailbox spam settings.
             
 
 
-## Manage Email Objects [/package/{packageId}/email/{emailId}]
+## Manage Email Objects [/package/{packageId}/email/{domain}]
 
 ### Retrieve Email Configuration for a Domain Name [GET]
 
@@ -8642,12 +8906,12 @@ update method but with an extra `id` property on each item.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->getWithFields("/package/{packageId}/email/{emailId}");
+    $request = $services_api->getWithFields("/package/{packageId}/email/{domain}");
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 
@@ -8700,13 +8964,13 @@ autoresponders, etc.) for the domain in a single call.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->postWithFields("/package/{packageId}/email/{emailId}", [
+    $request = $services_api->postWithFields("/package/{packageId}/email/{domain}", [
     ]);
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 + Attributes
@@ -8786,7 +9050,7 @@ Returns the service ID and full email address for this premium mailbox.
             
 
 
-## Webmail [/package/{packageId}/email/{emailId}/webmail]
+## Webmail [/package/{packageId}/email/{domain}/webmail]
 
 ### Retrieve the Webmail URL for a Mailbox [POST]
 
@@ -8798,14 +9062,14 @@ into webmail without requiring a password.
     $general_api_key = "API_KEY";
     $services_api = new \TwentyI\API\Services($general_api_key);
 
-    $request = $services_api->postWithFields("/package/{packageId}/email/{emailId}/webmail", [
+    $request = $services_api->postWithFields("/package/{packageId}/email/{domain}/webmail", [
             "id" => "string"
     ]);
 ```
 + Parameters
 
     + packageId: 1 (number, required) - The Package ID retrieved from get packages.
-    + emailId: 1 (number, required) - The Email ID.
+    + domain: 1 (string, required) - The domain name, e.g. `example.com`.
 
 
 + Attributes
@@ -9648,7 +9912,6 @@ Perform a WordPress search and replace.
     + Body
 
             
-                true
             
 
 
@@ -10099,7 +10362,6 @@ $password is required only if the $type is changePassword
     + Body
 
             
-                true
             
 
 
@@ -12767,7 +13029,6 @@ To use this API, you need to provide the following parameters:
 
 $in: An array containing the following information:
 
-id: The ID of the MSSQL database that you want to renew.
 
 The API call will return a float value or null. The float value represents the new expiration date of the MSSQL database in Unix timestamp format. If the renewal is unsuccessful or there is an error, the API will return null.
 
@@ -12776,6 +13037,10 @@ If you don't have sufficient funds in your balance, the renewal will fail. There
 
 This API endpoint is useful when you want to automate the renewal process for MSSQL databases and ensure that they remain active and accessible for an extended period.
 
+
+- `id`: The ID of the MSSQL database that you want to renew.
+
+- `id`: The ID of the MSSQL database that you want to renew.
 ```
     <?php
     $general_api_key = "API_KEY";
@@ -14817,9 +15082,7 @@ Upgrades a cloud server to the given spec and charges your account balance.
     + Body
 
             
-                {
-                    result: true
-                }
+                true
             
 
 

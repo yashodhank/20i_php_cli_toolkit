@@ -1,8 +1,19 @@
 # 20i API Coverage & Roadmap
 
 Assessment of this toolkit against the official 20i reseller API
-(`docs/20i.apib`, ~323 unique documented path+verb endpoints).
-Updated: 2026-08-30.
+(`docs/20i.apib`, 325 unique documented path+verb endpoints).
+Updated: 2026-08-30 (re-baselined against the latest blueprint revision).
+
+Blueprint revision notes (vs the previous bundled copy, 323 endpoints):
+
+- All 16 email endpoints were re-documented from `{emailId}` (numeric) to
+  `{domain}` — officially confirming the bare-domain path segment this
+  toolkit already uses and had verified live.
+- Two new billing endpoints: `POST /reseller/{id}/addMailboxQuotaAddon`
+  and `POST /reseller/{id}/addVpsAddon` (both documented as charging the
+  account balance immediately) — added to Tier 3 below.
+- Expanded parameter prose on domain renew/transfer (`years` semantics)
+  and SSL/MSSQL renewals; no changes to any endpoint this toolkit calls.
 
 ## Summary
 
@@ -34,7 +45,8 @@ Verified behaviors worth knowing (hard-won, see `docs/contracts/`):
   (numeric, stable, absent on SOA).
 - Email forward delete payload is a FLAT id array `{"delete":["f<id>"]}`;
   the intuitive nested shape is silently accepted **and ignored**.
-- Bare domain names work as the `{emailId}` path segment.
+- Bare domain names are the email path segment (verified live first;
+  now officially documented as `{domain}` in the latest blueprint).
 - `POST /package/{id}/names` add is idempotent; removing the last name is
   forbidden; removing the primary requires `chg`.
 
@@ -82,7 +94,9 @@ Verified behaviors worth knowing (hard-won, see `docs/contracts/`):
   EPP auth code, transfer lock, IPS tag on the per-domain side). All
   draw down the prepaid account balance.
 - **Service orders/renewals**: VPS, managed VPS, cloud servers, MSSQL,
-  premium mailboxes, SSL certificates, Website Turbo (all billing).
+  premium mailboxes, SSL certificates, Website Turbo, and the newly
+  documented mailbox-quota and VPS add-ons (`addMailboxQuotaAddon`,
+  `addVpsAddon` — charge the balance immediately). All billing.
 - **Timeline restores** (web/db/mailbox) — data-overwriting.
 - **VPS power/rebuild controls**, WordPress management suite (large:
   plugins, themes, users, staging, checksum, search-replace).
