@@ -11,12 +11,21 @@ This repository provides reusable PHP libraries and command-line tools for autom
 - Discover packages and the domains attached to them.
 - Resolve a domain to its hosting package.
 - Attach one or more domains to a package.
+- Detach domains from a package, with last-name and primary-name guards and a
+  pre-change DNS zone snapshot.
+- Move domains between packages with fail-safe ordering (a mid-move failure
+  leaves the domain attached to both packages, never neither).
 - Detect duplicate domain attachments.
 - Process explicit domains, standard-input batches, or all domains in a package.
 
 ### DNS management
 
 - Add TXT records to domains attached to 20i hosting packages.
+- Delete records (A, AAAA, CNAME, MX, TXT, SRV) by owner, type, and optional
+  value, keyed on the API's per-record identifier, with a mandatory pre-change
+  zone snapshot.
+- Atomically replace a TXT value in a single API call.
+- Dump full zones from the stored 20i configuration and from authoritative DNS.
 - Query the authoritative StackDNS nameservers directly.
 - Detect already-published identical TXT records.
 - Protect against accidental resubmission while a DNS change is awaiting publication.
@@ -24,7 +33,9 @@ This repository provides reusable PHP libraries and command-line tools for autom
 
 ### Email management
 
-- Create email forwards through the 20i API.
+- Create, list, update, and delete email forwards through the 20i API.
+- Verify every mutation by re-listing, so a silently ignored API call fails
+  loudly instead of reporting success.
 - Support individual and batch-oriented workflows.
 
 ### Shared CLI infrastructure
@@ -118,9 +129,11 @@ For DNS-specific behavior, propagation considerations, and batch examples, see [
 │   ├── bootstrap.php       Shared API bootstrap
 │   ├── cli.php             Common CLI helpers and exit codes
 │   ├── config.php          API credential loading
-│   ├── dns.php             DNS validation, packets, queries, and helpers
+│   ├── dns.php             DNS validation, packets, queries, and payloads
+│   ├── email.php           Email forward parsing, listing, and payloads
 │   ├── env.php             Lightweight .env loader
-│   └── package.php         Package and domain discovery helpers
+│   ├── package.php         Package, domain, and name-mapping helpers
+│   └── zone-records.php    Stored-zone record normalization (incl. ref ids)
 ├── scripts/
 │   ├── dns/                DNS automation commands
 │   ├── domain/             Domain and package commands
@@ -143,7 +156,7 @@ For DNS-specific behavior, propagation considerations, and batch examples, see [
 - **Safe automation:** Commands should support dry runs, preflight checks, and confirmation for consequential batch operations.
 - **Deterministic output:** Batch commands should report consistent per-item progress and final summaries.
 - **Minimal dependencies:** Prefer PHP implementations over external executables when doing so remains reliable and maintainable.
-- **Additive operations first:** DNS automation currently adds records only; it does not automatically delete or replace existing records.
+- **Destructive operations are guarded:** deletes, replacements, detaches, and moves require explicit matches, take pre-change snapshots, verify results independently, and fail loudly on ambiguity rather than guessing.
 - **Authoritative validation:** DNS inspection is performed directly against StackDNS authoritative nameservers rather than a recursive resolver.
 
 ## Documentation

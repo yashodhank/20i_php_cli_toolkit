@@ -18,6 +18,12 @@ cd /Users/kritananda/Projects/20i_php_cli_toolkit
 | Attach many from a file | `php scripts/domain/attach-domain-to-package.php --skip --yes <package-domain> < domains.txt` | all added (see summary) |
 | Add TXT to one domain | `php scripts/dns/add-records.php <domain> --name @ --type TXT --value "text" --dry-run` | safe to submit |
 | Add TXT to a batch | `php scripts/dns/add-records.php --name _v --type TXT --value "tok" --skip --yes < domains.txt` | all accepted or protected |
+| Delete a DNS record | `php scripts/dns/delete-records.php <domain> --name <n> --type TXT --value "v" --dry-run` | matched (dry-run) |
+| Replace a TXT value | `php scripts/dns/replace-records.php <domain> --name <n> --type TXT --old-value "a" --new-value "b"` | replaced atomically |
+| Detach a domain | `php scripts/domain/detach-domain-from-package.php <package-domain> <domain> --dry-run` | eligible (dry-run) |
+| Move a domain between packages | `php scripts/domain/move-domain.php <src-pkg-domain> <dst-pkg-domain> <domain>` | moved + verified |
+| List email forwards | `php scripts/email/list-forwards.php <package-domain>` | JSON line per domain |
+| Create / delete / update a forward | `php scripts/email/{create,delete,update}-forward.php …` | done + re-list verified |
 
 Golden rules:
 
@@ -37,8 +43,16 @@ Reusable PHP CLIs for a 20i reseller account:
 |---|---|---|---|
 | Domain attached? | `scripts/domain/exists.php` | No | Production |
 | Attach domains to a package | `scripts/domain/attach-domain-to-package.php` | Yes | Production |
+| Detach domains from a package | `scripts/domain/detach-domain-from-package.php` | Yes | Production |
+| Move domains between packages | `scripts/domain/move-domain.php` | Yes | Production |
 | Add TXT records | `scripts/dns/add-records.php` | Yes | Production |
-| Create email forwards | `scripts/email/create-forward.php` | Yes | **Legacy — see §7. Do not automate.** |
+| Delete DNS records | `scripts/dns/delete-records.php` | Yes | Production |
+| Replace a TXT record | `scripts/dns/replace-records.php` | Yes | Production |
+| Dump DNS records | `scripts/dns/dump-records.php` | No | Production |
+| List email forwards | `scripts/email/list-forwards.php` | No | Production |
+| Create email forwards | `scripts/email/create-forward.php` | Yes | Production (rewritten on `lib/bootstrap.php`, 2026-08) |
+| Delete email forwards | `scripts/email/delete-forward.php` | Yes | Production |
+| Update email forwards | `scripts/email/update-forward.php` | Yes | Production |
 
 There is no daemon, installer, or remote deploy step. Installation is: clone, init submodule, write `.env`, run `php scripts/...`.
 
@@ -113,7 +127,12 @@ Exiting `0` with package details means the key works end to end (this account re
 
 ## 3. Shared CLI contract
 
-Applies to `attach-domain-to-package.php` and `add-records.php`. `exists.php` has its **own** exit table (§5).
+Applies to every mutating command (`attach-domain-to-package.php`,
+`detach-domain-from-package.php`, `move-domain.php`, `add-records.php`,
+`delete-records.php`, `replace-records.php`, `create-forward.php`,
+`delete-forward.php`, `update-forward.php`). `exists.php` has its **own** exit
+table (§5); read-only JSON exporters (`dump-records.php`,
+`list-forwards.php`) use the shared table without exit 2.
 
 ### Exit codes (`lib/cli.php`)
 
@@ -309,30 +328,36 @@ php scripts/domain/attach-domain-to-package.php [--dry-run] [--yes] [--skip] \
 
 ---
 
-## 7. `scripts/email/create-forward.php` (legacy)
+## 7. Email forward commands
 
-Do **not** use this in admin, cron, CI, or agent workflows:
-
-- Requires `vendor/autoload.php` (no root Composer project exists)
-- Hardcodes the API key inline and ignores `.env`
-- No `--dry-run`, `--yes`, `--help`, no shared exit codes
-- Refetches `GET /package` once per distinct source domain
-- Skips invalid input lines but usually still exits 0
-
-Its intended shape, if it is ever rewritten on `lib/bootstrap.php`:
+The legacy `create-forward.php` (hardcoded key, vendor autoload, no shared
+exit codes) was replaced in 2026-08 by a full email-forward suite on
+`lib/bootstrap.php` + `lib/email.php`, following the §3 contract:
 
 ```text
-php scripts/email/create-forward.php user@example.com dest@elsewhere.example
-# or stdin lines:  <from>@<domain> <to>
+php scripts/email/create-forward.php [--dry-run] [--yes] [--skip] <local@domain> <remote@dest>
+php scripts/email/delete-forward.php [--dry-run] [--yes] [--skip] <local@domain> [<remote@dest>]
+php scripts/email/update-forward.php [--dry-run] [--yes] <local@domain> <old-remote> <new-remote>
+php scripts/email/list-forwards.php <package-domain> [...]        # read-only JSON Lines
+# stdin batches supported on all of them
 ```
 
-Until then, create forwards in the 20i control panel, or with a one-off snippet using `$api_key` from bootstrap.
+Key semantics (details in `scripts/email/README.md`):
+
+- Forward identity is the server-assigned id from `allMailForwarders`;
+  commands resolve by `local@domain` (+`remote` to disambiguate multiple
+  destinations — ambiguity fails loudly, never guesses).
+- Deletes/updates are verified by re-listing; a silently ignored API call
+  surfaces as a per-item failure, never false success.
+- Update creates the new destination first, then deletes the old; a failure
+  in between leaves both active and reports `NEEDS MANUAL DELETE`.
+- Catch-all and wildcard forwards are refused; mailboxes are out of scope.
 
 ---
 
 ## 8. `scripts/dns/add-records.php`
 
-Adds **one TXT record** to one or more domains already attached to a 20i package. Additive only — no deletes, no replace, no other RR types, no wildcards.
+Adds **one TXT record** to one or more domains already attached to a 20i package. Additive only — for deletes see `delete-records.php` (§8b), for value replacement see `replace-records.php` (§8c). No other RR types on add, no wildcards.
 
 ```text
 php scripts/dns/add-records.php [--dry-run] [--yes] [--skip] [--force] <domain> \
@@ -469,13 +494,47 @@ php scripts/dns/dump-records.php --source dns --types TXT example.com
 
 ---
 
+## 8b. `scripts/dns/delete-records.php`
+
+Deletes stored records matched by owner + type (+ optional value) via the
+per-record `ref` id. Follows the full §3 contract (`--dry-run`, `--skip`,
+`--force`, ≥10 confirm, stdin, `--all`).
+
+```text
+php scripts/dns/delete-records.php [flags] <domain> --name <n> --type <T> [--value <v>]
+```
+
+- `--type` ∈ A, AAAA, CNAME, MX, TXT, SRV. `--value` omitted deletes ALL
+  records at that owner+type.
+- Guards: SOA is never deletable; apex-NS deletion is refused outright.
+- A dump-shaped JSON-Lines **snapshot** (incl. raw `fields.ref`) is written to
+  the state dir (`…/20i-cli/snapshots/`) before each mutation; snapshot
+  failure aborts that domain.
+- Deletions are journaled 60 minutes like additions; post-change StackDNS
+  check is advisory (`ACCEPTED; PUBLICATION PENDING` is success).
+
+## 8c. `scripts/dns/replace-records.php`
+
+Atomically replaces one TXT value (single POST carrying both the new record
+and the old record's delete ref — no delete-then-add gap):
+
+```text
+php scripts/dns/replace-records.php [flags] <domain> --name <n> --type TXT --old-value <v> --new-value <v>
+```
+
+TXT-only in v1; requires exactly one matching record (zero or multiple
+matches fail that item). Snapshots and journals like §8b. Details:
+`scripts/dns/README.md`.
+
+---
+
 ## 9. Admin runbook
 
 | Incident | Diagnosis | Action |
 |---|---|---|
 | 401 invalid auth | Wrong or combined key in `.env` | General API key only; no quotes |
 | Stuck after printing a domain | 10+ eligible, waiting at `/dev/tty` | Ctrl-C (clean 2), rerun with `--yes` or shrink the batch |
-| Duplicates in control panel | `--force`, second host, or panel edit during publication window | Remove extra records in the 20i panel; this CLI cannot delete |
+| Duplicates in control panel | `--force`, second host, or panel edit during publication window | `delete-records.php --dry-run` to preview, then delete the extras (or use the panel) |
 | `RECENTLY SUBMITTED` forever on one machine | Journal still fresh (<60 min) | Wait, or investigate the journal file’s `submittedAt` |
 | Batch exits 3 | Read stdout `Failed domains` map | Fix each item; rerun only the failures |
 | `exists` returns 1 but you expected attached | Name might be a subdomain or typo | Confirm exact FQDN as attached in the panel |
@@ -543,8 +602,8 @@ A dry-run exit 3 still aborts the pipeline — inspection failures really are fa
 
 - Read, print, echo, or commit `.env` or key material — not even to “check quoting”
 - Combine general + auth-client keys
-- Claim other RR types, deletes, wildcard support, or package creation exist
-- Run `create-forward.php`
+- Claim non-TXT record ADDS, wildcard support, mailbox management, or package creation exist
+- Delete/detach/move/update anything without a `--dry-run` first and operator approval
 - Treat `exists.php` exit 1 as an error
 - Treat DNS `ACCEPTED; PUBLICATION PENDING` as a failure
 - Resubmit a DNS record within 60 minutes of acceptance to "see if it worked" — that defeats the journal
@@ -578,7 +637,7 @@ Never read or echo .env. General API key only — never combined keys.
 exists.php exit 1 = unattached, not a failure.
 Dry-run before any mutation. Show the dry-run summary before running live.
 DNS ACCEPTED; PUBLICATION PENDING is success — do not resubmit.
-Do not run scripts/email/create-forward.php.
+Deletes, detaches, moves and forward updates are destructive: dry-run + approval always.
 Report exit codes verbatim.
 ```
 
@@ -590,10 +649,16 @@ Report exit codes verbatim.
 |---|---|---|
 | Is a domain on a package? | `exists.php` | One `GET /package` per call |
 | Attach names to an existing package | `attach-domain-to-package.php` | No package creation |
+| Detach names from a package | `detach-domain-from-package.php` | Last-name + primary guards; zone snapshot first |
+| Move names between packages | `move-domain.php` | add-target→verify→rem-source; mid-failure = on both |
 | Add a TXT record | `add-records.php` | Apex or relative names; 1 record per invocation |
-| Other RR types / deletes / replace | — | Not implemented |
+| Delete DNS records | `delete-records.php` | A/AAAA/CNAME/MX/TXT/SRV by owner+type(+value); §8b |
+| Replace a TXT value | `replace-records.php` | Atomic single-POST; §8c |
+| Dump zone / verify publication | `dump-records.php` | Read-only; api + authoritative dns sources |
+| List email forwards | `list-forwards.php` | Read-only JSON Lines |
+| Create/delete/update email forwards | `{create,delete,update}-forward.php` | §7; re-list verified |
+| Non-TXT adds / mailboxes | — | Not implemented |
 | List packages | — | `exists.php --verbose` per domain, or custom `GET /package` snippet |
-| Email forwards | — | Panel only (§7) |
 | SSO / Stack users | — | Needs the auth client key; not in this toolkit |
 
 ---
@@ -608,7 +673,7 @@ Report exit codes verbatim.
 | Exit 1 “identical record already exists” | Published TXT duplicate | `--skip`, or change the value |
 | Everything `RECENTLY SUBMITTED` | Journal <60 min | Wait; `--force` only if duplicate intended |
 | `not attached to any visible package` | Name not in any package `names` | Attach first; check spelling |
-| `create-forward.php` autoload fatal | Legacy script | Don't use it (§7) |
+| Forward delete "accepted but still listed" | Wrong payload shape regression | Delete shape is flat `{"delete":["f<id>"]}` — see `lib/email.php` `buildDeleteForwardPayload()` |
 | Dry-run exits 3 | Inspect/unresolved errors in set | Fix those domains; 3 ≠ crash |
 | Exit 0 but `--value` "not visible" in dig | Publication window (30+ min) | Recheck later via another `--dry-run` |
 
@@ -620,6 +685,8 @@ Report exit codes verbatim.
 |---|---|
 | `.env` / `API_KEY` | `lib/env.php`, `lib/config.php` |
 | Shared exits, stdin, confirm | `lib/cli.php` |
-| Package scan, domain matching | `lib/package.php` |
-| TXT validation, StackDNS queries, payload | `lib/dns.php` |
+| Package scan, domain matching, names add/rem, move guards | `lib/package.php` |
+| Record validation, StackDNS queries, DNS payloads, ref matching, snapshots | `lib/dns.php` |
+| API-zone record normalization (incl. `fields.ref`) | `lib/zone-records.php` |
+| Email forward parsing, listing, payloads | `lib/email.php` |
 | 20i HTTP client | `lib/20i-api-modules/lib/TwentyI/API/` |
